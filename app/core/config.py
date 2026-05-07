@@ -8,6 +8,8 @@ Uses pydantic-settings for validation and type coercion.
 from pathlib import Path
 from typing import Optional
 
+from pydantic import Field as PydanticField
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to project root (two levels up from this file)
@@ -36,6 +38,13 @@ class Settings(BaseSettings):
 
     # --- Security ---
     secret_key: str = "change-me"
+
+    # --- Default Tutor (used to seed DB on first run) ---
+    default_tutor_tg_id: int | None = PydanticField(
+        default=None,
+        description="Telegram ID for the default tutor (set in .env)",
+    )
+    default_tutor_name: str = "Tutor"
 
     # --- Runtime ---
     environment: str = "development"

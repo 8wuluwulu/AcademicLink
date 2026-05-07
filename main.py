@@ -17,7 +17,8 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.core.config import settings
-from app.db.engine import init_db
+from app.db.database import init_db, async_session_factory
+from app.services.tutor_service import ensure_tutor_exists
 
 # ── Logging ──────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -42,6 +43,10 @@ async def lifespan(application: FastAPI):
     try:
         await init_db()
         logger.info("Database ready.")
+
+        # Seed default tutor if the table is empty
+        async with async_session_factory() as session:
+            await ensure_tutor_exists(session)
     except Exception as exc:
         logger.error("Database initialisation failed: %s", exc)
         # Allow the app to continue — the health-check will report degraded
