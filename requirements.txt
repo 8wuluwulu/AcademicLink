@@ -1,0 +1,22 @@
+# AcademicLink — Core Dependencies (Python 3.12+)
+
+# Web Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# Telegram Bot Framework
+aiogram>=3.4.1
+
+# ORM & Database
+sqlmodel>=0.0.22
+psycopg2-binary>=2.9.9
+
+# Configuration
+python-dotenv>=1.0.1
+pydantic-settings>=2.6.0
+
+# Async PostgreSQL driver (recommended for async SQLModel)
+asyncpg>=0.30.0
+
+# Alembic for database migrations
+alembic>=1.14.0
