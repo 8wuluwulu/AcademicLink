@@ -9,7 +9,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime
+from sqlalchemy import BigInteger, DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -38,9 +38,15 @@ class Student(SQLModel, table=True):
     )
     telegram_id: int | None = Field(
         default=None,
+        sa_type=BigInteger(),
         unique=True,
         index=True,
         description="Telegram user ID (optional)",
+    )
+    telegram_username: str | None = Field(
+        default=None,
+        max_length=32,
+        description="Telegram @username (without @)",
     )
 
     # ── Relationships ────────────────────────────────────────────────
@@ -58,6 +64,7 @@ class Tutor(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     tg_id: int = Field(
+        sa_type=BigInteger(),
         unique=True,
         index=True,
         description="Tutor's Telegram ID (for the admin bot)",

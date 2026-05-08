@@ -8,10 +8,11 @@ Each request is scoped to a specific ``tutor_id`` (multi-tenant model).
 import logging
 from datetime import datetime
 
+from aiogram import Bot
+from aiogram.exceptions import TelegramForbiddenError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-
 
 from app.db.database import get_session
 from app.db.models import Booking, Tutor
@@ -57,6 +58,12 @@ class BookingCreate(BaseModel):
         description="ID of the tutor to book a session with",
         examples=[1],
     )
+    telegram_username: str | None = Field(
+        default=None,
+        max_length=32,
+        description="Student's Telegram @username (optional)",
+        examples=["johndoe"],
+    )
 
 
 class BookingRead(BaseModel):
@@ -77,23 +84,17 @@ class BookingRead(BaseModel):
 async def notify_tutor_new_booking(
     booking: Booking,
     session: AsyncSession,
-    request: Request,
+    bot: Bot,
 ) -> None:
     """
-    Send a Telegram message to the assigned tutor about a new booking.
+    Send a Telegram notification to the tutor about a new booking.
 
-    Gracefully degrades if the bot is not running or the message
-    fails to send — a notification failure must never break the
-    booking flow.
+    Accepts an explicit ``Bot`` instance so the caller (route handler)
+    controls where the bot reference comes from (``request.app.state.bot``).
+
+    Gracefully degrades on any Telegram / network error — a notification
+    failure must never break the booking flow.
     """
-    bot = getattr(request.app.state, "bot", None)
-    if bot is None:
-        logger.warning(
-            "Bot is not initialised — skipping notification for booking #%d",
-            booking.id,
-        )
-        return
-
     # Fetch tutor to get their Telegram ID
     tutor = await session.get(Tutor, booking.tutor_id)
     if tutor is None:
@@ -102,22 +103,26 @@ async def notify_tutor_new_booking(
         )
         return
 
-    # Use eagerly loaded relationship; fall back to DB lookup
-    student_name = "Unknown"
-    student_phone = "N/A"
+    # Use eagerly loaded relationship for student data
+    student_name = "Неизвестно"
+    student_phone = "—"
+    tg_username = None
     if booking.student is not None:
         student_name = booking.student.full_name
         student_phone = booking.student.phone
+        tg_username = booking.student.telegram_username
 
-    # Format a clean notification message
-    appt = booking.appointment_time.strftime("%d %b %Y, %H:%M")
+    from app.bot.formatting import DIVIDER, fmt_contact_links, fmt_full
+
+    appt = fmt_full(booking.appointment_time)
+
     text = (
-        "📚 <b>New Booking Request</b>\n\n"
-        f"👤 Student: <b>{student_name}</b>\n"
-        f"📞 Phone: <code>{student_phone}</code>\n"
-        f"📖 Service: {booking.service_type}\n"
-        f"🕐 Appointment: {appt}\n"
-        f"🆔 Booking ID: #{booking.id}"
+        f"🔔 <b>Новая запись!</b>\n"
+        f"{DIVIDER}\n\n"
+        f"👤 Ученик: <b>{student_name}</b>\n"
+        f"{fmt_contact_links(student_phone, tg_username)}\n\n"
+        f"📚 Курс: {booking.service_type}\n"
+        f"🕒 Время: {appt}"
     )
 
     try:
@@ -127,8 +132,13 @@ async def notify_tutor_new_booking(
             tutor.tg_id,
             booking.id,
         )
+    except TelegramForbiddenError:
+        logger.error(
+            "Tutor tg_id=%d has blocked the bot — cannot deliver booking #%d",
+            tutor.tg_id,
+            booking.id,
+        )
     except Exception as exc:
-        # Never let a notification failure break the booking response
         logger.error(
             "Failed to notify tutor tg_id=%d for booking #%d: %s",
             tutor.tg_id,
@@ -169,11 +179,19 @@ async def create_booking(
             service_type=payload.service_type,
             appointment_time=payload.appointment_time,
             tutor_id=payload.tutor_id,
+            telegram_username=payload.telegram_username,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Fire-and-forget notification
-    await notify_tutor_new_booking(booking, session, request)
+    # Extract bot from application state and send notification
+    bot: Bot | None = getattr(request.app.state, "bot", None)
+    if bot is not None:
+        await notify_tutor_new_booking(booking, session, bot)
+    else:
+        logger.warning(
+            "Bot not initialised — skipping notification for booking #%d",
+            booking.id,
+        )
 
     return BookingRead(id=booking.id, status="success")

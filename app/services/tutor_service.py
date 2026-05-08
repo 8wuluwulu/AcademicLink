@@ -68,7 +68,7 @@ async def ensure_tutor_exists(session: AsyncSession) -> Tutor:
 
     tutor = Tutor(
         tg_id=settings.default_tutor_tg_id,
-        name=settings.default_tutor_name,
+        name=settings.default_tutor_name or "Основной репетитор",
         is_active=True,
     )
     session.add(tutor)

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         default=None,
         description="Telegram ID for the default tutor (set in .env)",
     )
-    default_tutor_name: str = "Tutor"
+    default_tutor_name: str = "Основной репетитор"
 
     # --- Runtime ---
     environment: str = "development"

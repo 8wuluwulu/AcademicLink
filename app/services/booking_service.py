@@ -27,6 +27,7 @@ async def create_booking_from_web(
     appointment_time: datetime,
     tutor_id: int | None = None,
     telegram_id: int | None = None,
+    telegram_username: str | None = None,
 ) -> Booking:
     """
     Create a new booking from a web-form submission.
@@ -61,16 +62,21 @@ async def create_booking_from_web(
             full_name=full_name,
             phone=phone,
             telegram_id=telegram_id,
+            telegram_username=telegram_username.lstrip("@") if telegram_username else None,
         )
         session.add(student)
         await session.flush()  # populate student.id
         logger.info("Created new student: %s (phone=%s)", full_name, phone)
     else:
-        # Update name / telegram_id if provided
+        # Update name / telegram fields if provided
         if student.full_name != full_name:
             student.full_name = full_name
         if telegram_id is not None and student.telegram_id != telegram_id:
             student.telegram_id = telegram_id
+        if telegram_username is not None:
+            clean_username = telegram_username.lstrip("@")
+            if student.telegram_username != clean_username:
+                student.telegram_username = clean_username
         logger.info("Found existing student id=%d for phone=%s", student.id, phone)
 
     # ── 2. Resolve tutor ─────────────────────────────────────────────
