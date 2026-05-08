@@ -62,8 +62,11 @@ async def lifespan(application: FastAPI):
         # Import Aiogram only when we actually have a token
         from aiogram import Bot, Dispatcher
         from app.bot.handlers import router as bot_router
+        from app.core.bot import set_bot
 
         bot = Bot(token=settings.bot_token)
+        set_bot(bot)  # Make bot accessible via get_bot() helper
+        application.state.bot = bot  # Also store on app.state for request access
         dp = Dispatcher()
         dp.include_router(bot_router)
 

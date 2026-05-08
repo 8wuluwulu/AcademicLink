@@ -7,9 +7,10 @@ from both the FastAPI API layer and the Telegram bot layer.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Booking, BookingStatus, Student, Tutor
@@ -46,6 +47,10 @@ async def create_booking_from_web(
         If the requested tutor is not found, is inactive, or no active
         tutor exists in the database.
     """
+    # ── 0. Normalize appointment_time to UTC-aware ────────────────────
+    if appointment_time.tzinfo is None:
+        appointment_time = appointment_time.replace(tzinfo=timezone.utc)
+
     # ── 1. Resolve student ───────────────────────────────────────────
     stmt = select(Student).where(Student.phone == phone)
     result = await session.execute(stmt)
@@ -101,10 +106,20 @@ async def create_booking_from_web(
         service_type=service_type,
         appointment_time=appointment_time,
         status=BookingStatus.PENDING,
+        created_at=datetime.now(timezone.utc),
     )
     session.add(booking)
     await session.commit()
-    await session.refresh(booking)
+
+    # Re-fetch with relationships eagerly loaded so callers
+    # (e.g. notify_tutor_new_booking) can access booking.student / .tutor
+    stmt = (
+        select(Booking)
+        .where(Booking.id == booking.id)
+        .options(selectinload(Booking.student), selectinload(Booking.tutor))
+    )
+    result = await session.execute(stmt)
+    booking = result.scalar_one()
 
     logger.info(
         "Booking #%d created — student=%d tutor=%d service=%r",

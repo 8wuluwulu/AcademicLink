@@ -9,6 +9,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -92,6 +93,7 @@ class Booking(SQLModel, table=True):
         description='Type of service, e.g. "IELTS Preparation"',
     )
     appointment_time: datetime = Field(
+        sa_type=DateTime(timezone=True),
         description="Scheduled date/time for the session",
     )
     status: BookingStatus = Field(
@@ -100,6 +102,7 @@ class Booking(SQLModel, table=True):
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=DateTime(timezone=True),
         description="Record creation timestamp (UTC)",
     )
 
