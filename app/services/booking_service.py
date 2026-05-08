@@ -24,6 +24,7 @@ async def create_booking_from_web(
     phone: str,
     service_type: str,
     appointment_time: datetime,
+    tutor_id: int | None = None,
     telegram_id: int | None = None,
 ) -> Booking:
     """
@@ -33,14 +34,17 @@ async def create_booking_from_web(
     ----
     1. Look up an existing ``Student`` by *phone* (unique).
        → If not found, create one.
-    2. Pick the first *active* ``Tutor`` (single-tutor MVP).
+    2. Resolve the target ``Tutor``:
+       - If *tutor_id* is provided (multi-tenant), look up that specific tutor.
+       - Otherwise, pick the first active tutor (single-tutor MVP fallback).
     3. Create a ``Booking`` with ``PENDING`` status.
     4. Commit and return the booking with relationships loaded.
 
     Raises
     ------
     ValueError
-        If no active tutor exists in the database.
+        If the requested tutor is not found, is inactive, or no active
+        tutor exists in the database.
     """
     # ── 1. Resolve student ───────────────────────────────────────────
     stmt = select(Student).where(Student.phone == phone)
@@ -64,16 +68,31 @@ async def create_booking_from_web(
             student.telegram_id = telegram_id
         logger.info("Found existing student id=%d for phone=%s", student.id, phone)
 
-    # ── 2. Get active tutor ──────────────────────────────────────────
-    stmt = select(Tutor).where(Tutor.is_active.is_(True)).limit(1)
-    result = await session.execute(stmt)
-    tutor = result.scalar_one_or_none()
+    # ── 2. Resolve tutor ─────────────────────────────────────────────
+    if tutor_id is not None:
+        # Multi-tenant: look up the specific tutor
+        stmt = select(Tutor).where(Tutor.id == tutor_id)
+        result = await session.execute(stmt)
+        tutor = result.scalar_one_or_none()
 
-    if tutor is None:
-        raise ValueError(
-            "No active tutor found. "
-            "Run ensure_tutor_exists() during startup to seed a default tutor."
-        )
+        if tutor is None:
+            raise ValueError(f"Tutor with id={tutor_id} not found.")
+        if not tutor.is_active:
+            raise ValueError(
+                f"Tutor '{tutor.name}' (id={tutor_id}) is not currently "
+                "accepting bookings."
+            )
+    else:
+        # Single-tutor MVP fallback: pick the first active tutor
+        stmt = select(Tutor).where(Tutor.is_active.is_(True)).limit(1)
+        result = await session.execute(stmt)
+        tutor = result.scalar_one_or_none()
+
+        if tutor is None:
+            raise ValueError(
+                "No active tutor found. "
+                "Run ensure_tutor_exists() during startup to seed a default tutor."
+            )
 
     # ── 3. Create booking ────────────────────────────────────────────
     booking = Booking(
