@@ -59,6 +59,10 @@ class Student(SQLModel, table=True):
         default=0,
         description="Number of pre-paid lessons remaining",
     )
+    is_active: bool = Field(
+        default=True,
+        description="Whether the student is active and shown in lists",
+    )
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="student")

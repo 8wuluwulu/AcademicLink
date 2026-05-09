@@ -68,6 +68,11 @@ async def create_booking_from_web(
         await session.flush()  # populate student.id
         logger.info("Created new student: %s (phone=%s)", full_name, phone)
     else:
+        # Reactivate student if they were archived
+        if not student.is_active:
+            student.is_active = True
+            logger.info("Reactivated student id=%d (phone=%s)", student.id, phone)
+
         # Update name / telegram fields if provided
         if student.full_name != full_name:
             student.full_name = full_name

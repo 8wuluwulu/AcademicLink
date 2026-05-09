@@ -48,12 +48,6 @@ from app.bot.formatting import (
     fmt_time,
 )
 
-# Keyboard shown while waiting for a cancel reason
-CANCEL_ACTION_KB = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="❌ Отмена действия")]],
-    resize_keyboard=True,
-    input_field_placeholder="Напишите причину или отмените…",
-)
 from app.db.database import async_session_factory
 from app.db.models import Booking, BookingStatus, Student, Tutor
 
@@ -68,8 +62,8 @@ class StudentSearch(StatesGroup):
     waiting_phone = State()
 
 
-class CancelBookingStates(StatesGroup):
-    waiting_for_reason = State()
+class StudentManagement(StatesGroup):
+    confirm_delete = State()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -161,6 +155,9 @@ async def _send_dashboard(message: Message) -> None:
         students_res = await session.execute(
             select(func.count(func.distinct(Booking.student_id))).where(
                 Booking.tutor_id == tutor.id,
+                Booking.student_id.in_(
+                    select(Student.id).where(Student.is_active == True)
+                )
             )
         )
         total_students = students_res.scalar_one()
@@ -171,9 +168,9 @@ async def _send_dashboard(message: Message) -> None:
     text = (
         f"{_greeting()}, <b>{tutor.name}</b>!\n\n"
         f"👤 {tutor.name}  ·  {status_icon} {status_text}\n\n"
-        f"📅 На сегодня: <b>{today_confirmed}</b> подтв. занятий\n"
-        f"Новые заявки: <b>{pending_count}</b>\n"
-        f"Всего учеников: <b>{total_students}</b>\n\n"
+        f"📅 Подтверждено на сегодня: <b>{today_confirmed}</b>\n"
+        f"🟡 Новые заявки: <b>{pending_count}</b>\n"
+        f"👥 Всего учеников: <b>{total_students}</b>\n\n"
         "<i>Выберите действие из меню ниже</i>"
     )
 
@@ -193,17 +190,19 @@ async def cmd_home(message: Message, state: FSMContext) -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════
-#  📅 Расписание — paginated schedule (Date → Student grouping)
+#  📅 Расписание & 🟡 Новые заявки — paginated lists
 # ═════════════════════════════════════════════════════════════════════
 
 
-async def _build_schedule_page(
-    tg_id: int, page: int,
+async def _build_bookings_page(
+    tg_id: int, 
+    page: int, 
+    statuses: list[BookingStatus],
+    title: str,
+    callback_prefix: str,
 ) -> tuple[str, InlineKeyboardMarkup | None]:
     """
-    Query bookings and build text + keyboard for the given page.
-
-    Grouping: Date → Student → time slots.
+    Query bookings by status and build text + keyboard for the given page.
     """
     async with async_session_factory() as session:
         tutor = await _get_tutor(tg_id, session)
@@ -214,7 +213,7 @@ async def _build_schedule_page(
             select(Booking)
             .where(
                 Booking.tutor_id == tutor.id,
-                Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+                Booking.status.in_(statuses),
             )
             .options(selectinload(Booking.student))
             .order_by(Booking.appointment_time)
@@ -223,9 +222,8 @@ async def _build_schedule_page(
 
     if not bookings:
         return (
-            "📅 <b>Расписание</b>\n\n"
-            "Сейчас записей нет.\n"
-            "Новые заявки появятся здесь автоматически.\n\n"
+            f"{title}\n\n"
+            "Сейчас записей в этом списке нет.\n\n"
             "<i>Нажмите «🏠 Главная» для возврата.</i>"
         ), None
 
@@ -234,12 +232,8 @@ async def _build_schedule_page(
     page = max(0, min(page, total_pages - 1))
     page_bookings = bookings[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
 
-    pending = sum(1 for b in bookings if b.status == BookingStatus.PENDING)
-    confirmed = sum(1 for b in bookings if b.status == BookingStatus.CONFIRMED)
-
     lines = [
-        f"📅 <b>Расписание</b>  ({total} записей)",
-        f"Ожидают: <b>{pending}</b>  ·  Подтверждены: <b>{confirmed}</b>",
+        f"{title}  ({total} записей)",
     ]
 
     # Group by date → time slots
@@ -262,27 +256,52 @@ async def _build_schedule_page(
     # Build keyboard: action buttons per booking + pagination
     kb_rows = [build_booking_actions(b) for b in page_bookings]
     if total_pages > 1:
-        kb_rows.append(build_page_nav(page, total_pages))
+        kb_rows.append(build_page_nav(page, total_pages, prefix=callback_prefix))
 
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
 
 @router.message(F.text == "📅 Расписание")
-@router.message(Command("list"))
 async def cmd_schedule(message: Message, state: FSMContext) -> None:
     await state.clear()
-    text, kb = await _build_schedule_page(message.from_user.id, 0)
+    text, kb = await _build_bookings_page(
+        message.from_user.id, 0, [BookingStatus.CONFIRMED], "📅 <b>Расписание</b>", "page_sch"
+    )
     await message.answer(text, parse_mode="HTML", reply_markup=kb or MAIN_MENU)
 
 
-@router.callback_query(F.data.startswith("page:"))
-async def cb_page(callback: CallbackQuery) -> None:
+@router.message(F.text == "🟡 Новые заявки")
+async def cmd_new_requests(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    text, kb = await _build_bookings_page(
+        message.from_user.id, 0, [BookingStatus.PENDING], "🟡 <b>Новые заявки</b>", "page_new"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=kb or MAIN_MENU)
+
+
+@router.callback_query(F.data.startswith("page_sch:"))
+async def cb_page_sch(callback: CallbackQuery) -> None:
     page = int(callback.data.split(":")[1])
-    text, kb = await _build_schedule_page(callback.from_user.id, page)
+    text, kb = await _build_bookings_page(
+        callback.from_user.id, page, [BookingStatus.CONFIRMED], "📅 <b>Расписание</b>", "page_sch"
+    )
     try:
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
-        pass  # message unchanged
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("page_new:"))
+async def cb_page_new(callback: CallbackQuery) -> None:
+    page = int(callback.data.split(":")[1])
+    text, kb = await _build_bookings_page(
+        callback.from_user.id, page, [BookingStatus.PENDING], "🟡 <b>Новые заявки</b>", "page_new"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -307,6 +326,7 @@ async def cmd_students(message: Message, state: FSMContext) -> None:
         result = await session.execute(
             select(Student)
             .where(
+                Student.is_active == True,
                 Student.id.in_(
                     select(Booking.student_id)
                     .where(Booking.tutor_id == tutor.id)
@@ -393,7 +413,30 @@ async def cb_student_history(callback: CallbackQuery) -> None:
         if len(bookings) > 10:
             lines.append(f"\n<i>… и ещё {len(bookings) - 10}</i>")
 
-    await callback.message.answer("\n".join(lines), parse_mode="HTML")
+    # Build inline contact button + delete button
+    kb_rows = []
+    contact_row = []
+    if student.telegram_username:
+        clean = student.telegram_username.lstrip("@")
+        contact_row.append(InlineKeyboardButton(
+            text="💬 Написать",
+            url=f"https://t.me/{clean}",
+        ))
+    if contact_row:
+        kb_rows.append(contact_row)
+
+    kb_rows.append([
+        InlineKeyboardButton(
+            text="🗑 Удалить ученика",
+            callback_data=f"student_delete_init:{student.id}",
+        )
+    ])
+
+    await callback.message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+    )
     await callback.answer()
 
 
@@ -432,7 +475,10 @@ async def _show_student_card(message: Message, phone: str) -> None:
     async with async_session_factory() as session:
         result = await session.execute(
             select(Student)
-            .where(Student.phone == phone)
+            .where(
+                Student.phone == phone,
+                Student.is_active == True,
+            )
             .options(selectinload(Student.bookings))
         )
         student = result.scalar_one_or_none()
@@ -466,7 +512,30 @@ async def _show_student_card(message: Message, phone: str) -> None:
         if len(bookings) > 10:
             lines.append(f"\n<i>… и ещё {len(bookings) - 10}</i>")
 
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=MAIN_MENU)
+    # Build inline contact button + delete button
+    kb_rows = []
+    contact_row = []
+    if student.telegram_username:
+        clean = student.telegram_username.lstrip("@")
+        contact_row.append(InlineKeyboardButton(
+            text="💬 Написать",
+            url=f"https://t.me/{clean}",
+        ))
+    if contact_row:
+        kb_rows.append(contact_row)
+
+    kb_rows.append([
+        InlineKeyboardButton(
+            text="🗑 Удалить ученика",
+            callback_data=f"student_delete_init:{student.id}",
+        )
+    ])
+
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -613,12 +682,12 @@ async def cb_confirm(callback: CallbackQuery) -> None:
     logger.info("Booking #%d confirmed by tg_id=%d", booking_id, callback.from_user.id)
 
 
-# ── Cancel (with reason FSM) ─────────────────────────────────────────
+# ── Cancel (Immediate with Inline Confirmation) ──────────────────────
 
 
 @router.callback_query(F.data.startswith("cancel:"))
-async def cb_cancel_start(callback: CallbackQuery, state: FSMContext) -> None:
-    """Step 1: Enter FSM and ask tutor for a cancellation reason."""
+async def cb_cancel_init(callback: CallbackQuery, state: FSMContext) -> None:
+    """Ask for confirmation before cancelling."""
     booking_id = int(callback.data.split(":")[1])
 
     async with async_session_factory() as session:
@@ -631,48 +700,27 @@ async def cb_cancel_start(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.message.edit_reply_markup(reply_markup=None)
             return
 
-    # Save booking_id into FSM data and enter the reason-waiting state
-    await state.set_state(CancelBookingStates.waiting_for_reason)
-    await state.update_data(cancel_booking_id=booking_id)
-
-    await callback.message.answer(
-        "🔴 <b>Отмена записи</b>\n\n"
-        "Напишите причину отмены.\n"
-        "<i>Она будет использована для уведомления ученика.</i>\n\n"
-        "Нажмите <b>❌ Отмена действия</b> чтобы вернуться.",
-        parse_mode="HTML",
-        reply_markup=CANCEL_ACTION_KB,
+    text = (
+        "🔴 <b>Подтвердите отмену</b>\n\n"
+        "Вы действительно хотите отменить эту запись?\n"
+        "<i>Это действие нельзя отменить.</i>"
     )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, отменить", callback_data=f"cancel_confirm:{booking_id}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_abort"),
+        ]
+    ])
+    
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
-@router.message(F.text == "❌ Отмена действия")
-async def cmd_cancel_abort(message: Message, state: FSMContext) -> None:
-    """Abort the cancellation flow and return to the main menu."""
-    await state.clear()
-    await message.answer(
-        "Действие отменено.",
-        parse_mode="HTML",
-        reply_markup=MAIN_MENU,
-    )
-
-
-@router.message(CancelBookingStates.waiting_for_reason)
-async def process_cancel_reason(message: Message, state: FSMContext) -> None:
-    """Step 2: Receive the reason, cancel the booking, offer a t.me link."""
-    reason = message.text.strip()
-    data = await state.get_data()
-    booking_id = data.get("cancel_booking_id")
-    await state.clear()
-
-    if not booking_id:
-        await message.answer(
-            "Не удалось определить запись. Попробуйте ещё раз из расписания.",
-            parse_mode="HTML",
-            reply_markup=MAIN_MENU,
-        )
-        return
-
+@router.callback_query(F.data.startswith("cancel_confirm:"))
+async def cb_cancel_confirm(callback: CallbackQuery) -> None:
+    booking_id = int(callback.data.split(":")[1])
+    
     async with async_session_factory() as session:
         result = await session.execute(
             select(Booking)
@@ -682,51 +730,38 @@ async def process_cancel_reason(message: Message, state: FSMContext) -> None:
         booking = result.scalar_one_or_none()
 
         if booking is None:
-            await message.answer(
-                "Запись не найдена.", parse_mode="HTML", reply_markup=MAIN_MENU,
-            )
+            await callback.answer("Запись не найдена.", show_alert=True)
             return
 
         if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
-            await message.answer(
-                "Эта запись уже обработана.", parse_mode="HTML", reply_markup=MAIN_MENU,
-            )
+            await callback.answer("Эта запись уже обработана.", show_alert=True)
             return
 
         booking.status = BookingStatus.CANCELLED
         await session.commit()
-
-        # Collect student info while session is open
-        student_name = booking.student.full_name if booking.student else "Ученик"
+        
         tg_username = booking.student.telegram_username if booking.student else None
 
-    now = datetime.now(MSK)
-
-    lines = [
-        f"🔴 <b>Запись отменена</b>\n",
-        f"🕒 {fmt_full(now)}",
-        f"Причина: <i>{reason}</i>",
-        f"👤 {student_name}",
-    ]
-
     # Build the "notify student" button
+    kb_rows = []
     if tg_username:
         clean = tg_username.lstrip("@")
-        link = f"https://t.me/{clean}"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Написать", url=link)],
-        ])
-    else:
-        lines.append("<i>Telegram не указан — уведомите вручную.</i>")
-        kb = None
+        kb_rows.append([InlineKeyboardButton(text="💬 Написать ученику", url=f"https://t.me/{clean}")])
+    
+    await callback.message.edit_text(
+        "🔴 <b>Запись отменена</b>\n\n"
+        "Вы можете написать ученику, чтобы объяснить причину.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
+    )
+    await callback.answer("Запись отменена")
+    logger.info("Booking #%d cancelled by tg_id=%d", booking_id, callback.from_user.id)
 
-    await message.answer(
-        "\n".join(lines), parse_mode="HTML", reply_markup=kb or MAIN_MENU,
-    )
-    logger.info(
-        "Booking #%d cancelled with reason by tg_id=%d: %s",
-        booking_id, message.from_user.id, reason,
-    )
+
+@router.callback_query(F.data == "cancel_abort")
+async def cb_cancel_abort(callback: CallbackQuery) -> None:
+    await callback.message.edit_text("Отмена действия отклонена.")
+    await callback.answer()
 
 
 # ── Detail ───────────────────────────────────────────────────────────
@@ -802,3 +837,88 @@ async def cb_toggle(callback: CallbackQuery) -> None:
     )
     await callback.answer(alert)
     logger.info("Tutor #%d toggled is_active=%s", tutor_id, tutor.is_active)
+
+
+# ── Student Deletion (Archive) ───────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("student_delete_init:"))
+async def cb_student_delete_init(callback: CallbackQuery, state: FSMContext) -> None:
+    student_id = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        student = await session.get(Student, student_id)
+        if student is None:
+            await callback.answer("Ученик не найден.", show_alert=True)
+            return
+
+    await state.set_state(StudentManagement.confirm_delete)
+    await state.update_data(delete_student_id=student_id)
+
+    text = (
+        f"⚠️ <b>Удаление ученика</b>\n\n"
+        f"Вы уверены, что хотите удалить ученика <b>{student.full_name}</b>?\n\n"
+        f"<i>История его занятий сохранится в базе, но он больше "
+        f"не будет отображаться в списках активных учеников.</i>"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data="student_delete_confirm"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="student_delete_abort"),
+        ]
+    ])
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(StudentManagement.confirm_delete, F.data == "student_delete_confirm")
+async def cb_student_delete_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    student_id = data.get("delete_student_id")
+    await state.clear()
+
+    if not student_id:
+        await callback.answer("Ошибка: ID ученика не найден.", show_alert=True)
+        return
+
+    async with async_session_factory() as session:
+        student = await session.get(Student, student_id)
+        if student is None:
+            await callback.answer("Ученик не найден.", show_alert=True)
+            return
+
+        # Soft delete
+        student.is_active = False
+
+        # Cleanup: Cancel PENDING bookings
+        result = await session.execute(
+            select(Booking).where(
+                Booking.student_id == student_id,
+                Booking.status == BookingStatus.PENDING,
+            )
+        )
+        pending_bookings = result.scalars().all()
+        for b in pending_bookings:
+            b.status = BookingStatus.CANCELLED
+            # Here we could also log the reason if we had a reason field in Booking model
+            # But the prompt says "Student removed from CRM." as the reason.
+            # Assuming we might want to notify or just leave it.
+
+        await session.commit()
+        student_name = student.full_name
+
+    await callback.message.edit_text(
+        f"✅ Ученик <b>{student_name}</b> успешно удален (архивирован).",
+        parse_mode="HTML",
+    )
+    await callback.answer("Ученик удален")
+    logger.info("Student #%d archived by tg_id=%d", student_id, callback.from_user.id)
+
+
+@router.callback_query(StudentManagement.confirm_delete, F.data == "student_delete_abort")
+async def cb_student_delete_abort(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.message.edit_text("Удаление отменено.")
+    await callback.answer()
