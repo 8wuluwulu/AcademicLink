@@ -20,3 +20,6 @@ asyncpg>=0.30.0
 
 # Alembic for database migrations
 alembic>=1.14.0
+
+# Background task scheduler
+apscheduler>=3.10.4

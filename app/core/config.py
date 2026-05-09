@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # --- Runtime ---
     environment: str = "development"
 
+    # --- Scheduler ---
+    morning_briefing_hour: int = 8
+    reminder_minutes_before: int = 30
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"

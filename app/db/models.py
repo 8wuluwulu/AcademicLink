@@ -6,10 +6,10 @@ Each class maps to a PostgreSQL table and doubles as a Pydantic schema.
 """
 
 import enum
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime
+from sqlalchemy import BigInteger, DateTime, Text, Time
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -20,6 +20,8 @@ class BookingStatus(str, enum.Enum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
+    RESCHEDULED = "RESCHEDULED"
+    COMPLETED = "COMPLETED"
 
 
 # ── Student ──────────────────────────────────────────────────────────
@@ -47,6 +49,15 @@ class Student(SQLModel, table=True):
         default=None,
         max_length=32,
         description="Telegram @username (without @)",
+    )
+    notes: str | None = Field(
+        default=None,
+        sa_type=Text(),
+        description="Tutor's private notes about the student",
+    )
+    prepaid_balance: int = Field(
+        default=0,
+        description="Number of pre-paid lessons remaining",
     )
 
     # ── Relationships ────────────────────────────────────────────────
@@ -77,9 +88,43 @@ class Tutor(SQLModel, table=True):
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="tutor")
+    availability_slots: list["AvailabilitySlot"] = Relationship(
+        back_populates="tutor",
+    )
 
     def __repr__(self) -> str:
         return f"<Tutor id={self.id} name={self.name!r} active={self.is_active}>"
+
+
+# ── AvailabilitySlot ─────────────────────────────────────────────────
+class AvailabilitySlot(SQLModel, table=True):
+    """A recurring weekly time window when a tutor is available."""
+
+    __tablename__ = "availability_slots"
+
+    id: int | None = Field(default=None, primary_key=True)
+    tutor_id: int = Field(foreign_key="tutors.id", index=True)
+    weekday: int = Field(
+        ge=0, le=6,
+        description="Day of week: 0=Monday … 6=Sunday",
+    )
+    start_time: time = Field(
+        sa_type=Time(),
+        description="Slot start time (e.g. 09:00)",
+    )
+    end_time: time = Field(
+        sa_type=Time(),
+        description="Slot end time (e.g. 17:00)",
+    )
+
+    # ── Relationships ────────────────────────────────────────────────
+    tutor: Optional[Tutor] = Relationship(back_populates="availability_slots")
+
+    def __repr__(self) -> str:
+        return (
+            f"<AvailabilitySlot tutor={self.tutor_id} "
+            f"day={self.weekday} {self.start_time}-{self.end_time}>"
+        )
 
 
 # ── Booking ──────────────────────────────────────────────────────────
@@ -111,6 +156,16 @@ class Booking(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
         sa_type=DateTime(timezone=True),
         description="Record creation timestamp (UTC)",
+    )
+    reminded_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        description="When the pre-lesson reminder was sent (NULL = not sent)",
+    )
+    followed_up_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        description="When the post-lesson follow-up was sent (NULL = not sent)",
     )
 
     # ── Relationships ────────────────────────────────────────────────
