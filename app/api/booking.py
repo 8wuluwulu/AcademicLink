@@ -112,17 +112,16 @@ async def notify_tutor_new_booking(
         student_phone = booking.student.phone
         tg_username = booking.student.telegram_username
 
-    from app.bot.formatting import DIVIDER, fmt_contact_links, fmt_full
+    from app.bot.formatting import fmt_contact_links, fmt_full
 
     appt = fmt_full(booking.appointment_time)
 
     text = (
-        f"🔔 <b>Новая запись!</b>\n"
-        f"{DIVIDER}\n\n"
-        f"👤 Ученик: <b>{student_name}</b>\n"
+        f"🔔 <b>Новая запись!</b>\n\n"
+        f"👤 <b>{student_name}</b>\n"
         f"{fmt_contact_links(student_phone, tg_username)}\n\n"
-        f"📚 Курс: {booking.service_type}\n"
-        f"🕒 Время: {appt}"
+        f"{booking.service_type}\n"
+        f"🕒 {appt}"
     )
 
     try:

@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 MSK = timezone(timedelta(hours=3))
 
 # ── Visual Constants ─────────────────────────────────────────────────
-DIVIDER = "─" * 26
 PAGE_SIZE = 5
 
 STATUS_EMOJI = {"PENDING": "🟡", "CONFIRMED": "🟢", "CANCELLED": "🔴"}
@@ -83,6 +82,11 @@ def fmt_date_short(dt: datetime) -> str:
     return f"{lc.day} {_MONTHS_GEN[lc.month]}, {_WEEKDAYS_SHORT[lc.weekday()]}"
 
 
+def fmt_date_dot(dt: datetime) -> str:
+    """'15.05.2026'"""
+    return dt.astimezone(MSK).strftime("%d.%m.%Y")
+
+
 def fmt_time(dt: datetime) -> str:
     """'14:00'"""
     return dt.astimezone(MSK).strftime("%H:%M")
@@ -136,18 +140,16 @@ def fmt_booking_compact(b: Booking) -> str:
     """One-line booking for daily summary / schedule lists."""
     icon = STATUS_EMOJI.get(b.status.value, "❓")
     name = b.student.full_name if b.student else "—"
-    return f"{icon} {fmt_time(b.appointment_time)} │ {b.service_type} │ <b>{name}</b>"
+    return f"{icon} 🕒 {fmt_time(b.appointment_time)} — {name} ({b.service_type})"
 
 
 def fmt_booking_card(b: Booking) -> str:
-    """Multi-line booking card with divider."""
+    """Multi-line booking card."""
     icon = STATUS_EMOJI.get(b.status.value, "❓")
     name = b.student.full_name if b.student else "—"
     lines = [
-        DIVIDER,
-        f"{icon} <b>#{b.id}</b> • {fmt_date_short(b.appointment_time)}, {fmt_time(b.appointment_time)}",
-        f"   📚 {b.service_type}",
-        f"   👤 {name}",
+        f"{icon} 🕒 <b>{fmt_time(b.appointment_time)}</b> — {name}",
+        f"     {b.service_type}",
     ]
     return "\n".join(lines)
 
@@ -156,21 +158,33 @@ def fmt_booking_card(b: Booking) -> str:
 
 
 def build_booking_actions(b: Booking) -> list[InlineKeyboardButton]:
-    """Inline action buttons for one booking based on its status."""
+    """Inline action buttons for one booking based on its status.
+
+    Uses time (HH:MM) as the human label instead of DB id.
+    """
     from app.db.models import BookingStatus
 
+    time_label = fmt_time(b.appointment_time)
     row: list[InlineKeyboardButton] = []
     if b.status == BookingStatus.PENDING:
         row.append(InlineKeyboardButton(
-            text=f"✅ #{b.id}", callback_data=f"confirm:{b.id}",
+            text=f"✅ {time_label}", callback_data=f"confirm:{b.id}",
         ))
     if b.status in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
         row.append(InlineKeyboardButton(
-            text=f"🔴 #{b.id}", callback_data=f"cancel:{b.id}",
+            text=f"✖ {time_label}", callback_data=f"cancel:{b.id}",
         ))
     row.append(InlineKeyboardButton(
-        text=f"👤 #{b.id}", callback_data=f"detail:{b.id}",
+        text=f"📋 {time_label}", callback_data=f"detail:{b.id}",
     ))
+
+    # Compact "Написать" button next to booking details
+    if b.student and b.student.telegram_username:
+        clean = b.student.telegram_username.lstrip("@")
+        row.append(InlineKeyboardButton(
+            text="💬", url=f"https://t.me/{clean}",
+        ))
+
     return row
 
 

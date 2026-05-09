@@ -13,7 +13,6 @@ Tutor dashboard & workflow:
 
 import logging
 import math
-import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -34,7 +33,6 @@ from sqlalchemy.orm import selectinload
 
 from app.bot.formatting import (
     BACK_KB,
-    DIVIDER,
     MAIN_MENU,
     MSK,
     PAGE_SIZE,
@@ -45,6 +43,7 @@ from app.bot.formatting import (
     fmt_booking_compact,
     fmt_contact_links,
     fmt_date,
+    fmt_date_dot,
     fmt_full,
     fmt_time,
 )
@@ -82,22 +81,22 @@ async def _get_tutor(tg_id: int, session) -> Tutor | None:
 
 
 _NOT_REGISTERED = (
-    "⚠️ <b>Вы не зарегистрированы</b>\n\n"
+    "<b>Вы не зарегистрированы</b>\n\n"
     "Убедитесь, что ваш Telegram ID добавлен в "
     "<code>.env</code> как <code>DEFAULT_TUTOR_TG_ID</code>.\n\n"
-    "<i>💡 Отправьте /start чтобы узнать свой ID.</i>"
+    "Отправьте /start чтобы узнать свой ID."
 )
 
 
 def _greeting() -> str:
     h = datetime.now(MSK).hour
     if h < 6:
-        return "🌙 Доброй ночи"
+        return "Доброй ночи"
     if h < 12:
-        return "☀️ Доброе утро"
+        return "Доброе утро"
     if h < 18:
-        return "🌤 Добрый день"
-    return "🌆 Добрый вечер"
+        return "Добрый день"
+    return "Добрый вечер"
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -128,9 +127,9 @@ async def _send_dashboard(message: Message) -> None:
 
         if tutor is None:
             await message.answer(
-                f"{_greeting()}, <b>{name}</b>! 👋\n\n"
-                f"🆔 Ваш Telegram ID: <code>{tg_id}</code>\n\n"
-                "⚠️ Вы ещё не зарегистрированы как репетитор.\n"
+                f"{_greeting()}, <b>{name}</b>!\n\n"
+                f"Ваш Telegram ID: <code>{tg_id}</code>\n\n"
+                "Вы ещё не зарегистрированы как репетитор.\n"
                 "Добавьте этот ID в <code>.env</code> как "
                 "<code>DEFAULT_TUTOR_TG_ID</code> и перезапустите приложение.",
                 parse_mode="HTML",
@@ -138,7 +137,6 @@ async def _send_dashboard(message: Message) -> None:
             )
             return
 
-        # ── Today's confirmed lessons ────────────────────────────────
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
 
@@ -152,7 +150,6 @@ async def _send_dashboard(message: Message) -> None:
         )
         today_confirmed = today_res.scalar_one()
 
-        # ── Pending count ────────────────────────────────────────────
         pending_res = await session.execute(
             select(func.count(Booking.id)).where(
                 Booking.tutor_id == tutor.id,
@@ -161,7 +158,6 @@ async def _send_dashboard(message: Message) -> None:
         )
         pending_count = pending_res.scalar_one()
 
-        # ── Total active students ────────────────────────────────────
         students_res = await session.execute(
             select(func.count(func.distinct(Booking.student_id))).where(
                 Booking.tutor_id == tutor.id,
@@ -169,20 +165,16 @@ async def _send_dashboard(message: Message) -> None:
         )
         total_students = students_res.scalar_one()
 
-    # ── Build dashboard ──────────────────────────────────────────────
-    status_icon = "✅" if tutor.is_active else "❌"
+    status_icon = "🟢" if tutor.is_active else "🔴"
     status_text = "Активен" if tutor.is_active else "Пауза"
 
     text = (
-        f"{_greeting()}, <b>{tutor.name}</b>! 👋\n"
-        f"{DIVIDER}\n\n"
-        f"👤 <b>Профиль</b>\n"
-        f"   📛 {tutor.name}  │  {status_icon} {status_text}\n\n"
-        f"📅 <b>На сегодня:</b> <code>{today_confirmed}</code> подтв. занятий\n"
-        f"📩 <b>Новые заявки:</b> <code>{pending_count}</code>\n"
-        f"📝 <b>Всего учеников:</b> <code>{total_students}</code>\n\n"
-        f"{DIVIDER}\n\n"
-        "<i>💡 Выберите действие из меню ниже</i>"
+        f"{_greeting()}, <b>{tutor.name}</b>!\n\n"
+        f"👤 {tutor.name}  ·  {status_icon} {status_text}\n\n"
+        f"📅 На сегодня: <b>{today_confirmed}</b> подтв. занятий\n"
+        f"Новые заявки: <b>{pending_count}</b>\n"
+        f"Всего учеников: <b>{total_students}</b>\n\n"
+        "<i>Выберите действие из меню ниже</i>"
     )
 
     await message.answer(text, parse_mode="HTML", reply_markup=MAIN_MENU)
@@ -232,9 +224,9 @@ async def _build_schedule_page(
     if not bookings:
         return (
             "📅 <b>Расписание</b>\n\n"
-            "🎉 Пока новых заявок нет!\n"
-            "Отдыхайте — новые записи появятся здесь автоматически.\n\n"
-            "<i>💡 Нажмите «🏠 Главная» для обзора.</i>"
+            "Сейчас записей нет.\n"
+            "Новые заявки появятся здесь автоматически.\n\n"
+            "<i>Нажмите «🏠 Главная» для возврата.</i>"
         ), None
 
     total = len(bookings)
@@ -242,43 +234,30 @@ async def _build_schedule_page(
     page = max(0, min(page, total_pages - 1))
     page_bookings = bookings[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
 
-    # Count totals
     pending = sum(1 for b in bookings if b.status == BookingStatus.PENDING)
     confirmed = sum(1 for b in bookings if b.status == BookingStatus.CONFIRMED)
 
     lines = [
         f"📅 <b>Расписание</b>  ({total} записей)",
-        f"🟡 Ожидают: {pending}  │  🟢 Подтверждены: {confirmed}",
+        f"Ожидают: <b>{pending}</b>  ·  Подтверждены: <b>{confirmed}</b>",
     ]
 
-    # ── Group by date → student ──────────────────────────────────────
-    by_date: dict[str, dict[int, list[Booking]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    # Group by date → time slots
+    by_date: dict[str, list[Booking]] = defaultdict(list)
     for b in page_bookings:
-        date_key = fmt_date(b.appointment_time)
-        sid = b.student_id if b.student else 0
-        by_date[date_key][sid].append(b)
+        date_key = fmt_date_dot(b.appointment_time)
+        by_date[date_key].append(b)
 
-    for date_label, students_map in by_date.items():
-        lines.append(f"\n📆 <b>{date_label}</b>")
-        lines.append(DIVIDER)
+    for date_label, date_bookings in by_date.items():
+        lines.append(f"\n📅 <b>{date_label}</b>\n")
 
-        for _sid, student_bookings in students_map.items():
-            student = student_bookings[0].student
-            name = student.full_name if student else "—"
-            phone = student.phone if student else "—"
-
-            lines.append(f"\n   👤 <b>{name}</b>  │  <code>{phone}</code>")
-
-            for b in student_bookings:
-                icon = STATUS_EMOJI.get(b.status.value, "❓")
-                lines.append(
-                    f"      {icon} #{b.id} │ {fmt_time(b.appointment_time)} │ "
-                    f"{b.service_type}"
-                )
-
-    lines.append(f"\n{DIVIDER}")
+        for b in date_bookings:
+            icon = STATUS_EMOJI.get(b.status.value, "❓")
+            name = b.student.full_name if b.student else "—"
+            lines.append(
+                f"{icon} 🕒 <b>{fmt_time(b.appointment_time)}</b> — "
+                f"{name} ({b.service_type})"
+            )
 
     # Build keyboard: action buttons per booking + pagination
     kb_rows = [build_booking_actions(b) for b in page_bookings]
@@ -314,15 +293,108 @@ async def cb_page(callback: CallbackQuery) -> None:
 
 @router.message(F.text == "👥 Ученики")
 async def cmd_students(message: Message, state: FSMContext) -> None:
-    await state.set_state(StudentSearch.waiting_phone)
+    """Show a distinct list of students (deduplicated by phone)."""
+    await state.clear()
+    tg_id = message.from_user.id
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(tg_id, session)
+        if tutor is None:
+            await message.answer(_NOT_REGISTERED, parse_mode="HTML")
+            return
+
+        # Distinct students via a grouped subquery on student_id
+        result = await session.execute(
+            select(Student)
+            .where(
+                Student.id.in_(
+                    select(Booking.student_id)
+                    .where(Booking.tutor_id == tutor.id)
+                    .distinct()
+                )
+            )
+            .order_by(Student.full_name)
+        )
+        students = result.scalars().all()
+
+    if not students:
+        await message.answer(
+            "👥 <b>Ученики</b>\n\n"
+            "У вас пока нет учеников.\n"
+            "Они появятся здесь после первой записи.",
+            parse_mode="HTML",
+            reply_markup=MAIN_MENU,
+        )
+        return
+
+    lines = [f"👥 <b>Ученики</b>  ({len(students)})\n"]
+    for s in students:
+        lines.append(f"👤 <b>{s.full_name}</b>")
+        lines.append(f"     📞 {s.phone}\n")
+
+    # Build inline buttons: View History + Contact per student
+    kb_rows = []
+    for s in students:
+        row = [
+            InlineKeyboardButton(
+                text=f"📋 {s.full_name}",
+                callback_data=f"student_history:{s.id}",
+            ),
+        ]
+        if s.telegram_username:
+            clean = s.telegram_username.lstrip("@")
+            row.append(InlineKeyboardButton(
+                text="💬",
+                url=f"https://t.me/{clean}",
+            ))
+        kb_rows.append(row)
+
     await message.answer(
-        "👥 <b>Поиск ученика</b>\n\n"
-        "Введите номер телефона ученика:\n"
-        "<i>Например: +998901234567</i>\n\n"
-        "Нажмите <b>◀️ Назад</b> для возврата в меню.",
+        "\n".join(lines),
         parse_mode="HTML",
-        reply_markup=BACK_KB,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
     )
+
+
+@router.callback_query(F.data.startswith("student_history:"))
+async def cb_student_history(callback: CallbackQuery) -> None:
+    """Show booking history for a specific student."""
+    student_id = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Student)
+            .where(Student.id == student_id)
+            .options(selectinload(Student.bookings))
+        )
+        student = result.scalar_one_or_none()
+
+    if student is None:
+        await callback.answer("Ученик не найден.", show_alert=True)
+        return
+
+    bookings = sorted(student.bookings, key=lambda b: b.appointment_time, reverse=True)
+
+    lines = [
+        f"👤 <b>{student.full_name}</b>",
+        f"{fmt_contact_links(student.phone, student.telegram_username)}",
+        f"Всего занятий: <b>{len(bookings)}</b>",
+    ]
+
+    if not bookings:
+        lines.append("\n<i>История занятий пуста.</i>")
+    else:
+        lines.append("\n<b>История:</b>\n")
+        for b in bookings[:10]:
+            icon = STATUS_EMOJI.get(b.status.value, "❓")
+            lines.append(
+                f"{icon} 🕒 {fmt_full(b.appointment_time)} — {b.service_type}"
+            )
+        if len(bookings) > 10:
+            lines.append(f"\n<i>… и ещё {len(bookings) - 10}</i>")
+
+    await callback.message.answer("\n".join(lines), parse_mode="HTML")
+    await callback.answer()
 
 
 @router.message(StudentSearch.waiting_phone)
@@ -331,7 +403,7 @@ async def process_student_phone(message: Message, state: FSMContext) -> None:
 
     if len(phone) < 7 or not any(c.isdigit() for c in phone):
         await message.answer(
-            "⚠️ Введите корректный номер телефона.\n"
+            "Введите корректный номер телефона.\n"
             "<i>Например: +998901234567</i>",
             parse_mode="HTML",
             reply_markup=BACK_KB,
@@ -349,7 +421,7 @@ async def cmd_student_direct(message: Message, state: FSMContext) -> None:
     parts = message.text.strip().split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         await message.answer(
-            "📎 <b>Использование:</b> <code>/student +998901234567</code>",
+            "<b>Использование:</b> <code>/student +998901234567</code>",
             parse_mode="HTML",
         )
         return
@@ -367,8 +439,8 @@ async def _show_student_card(message: Message, phone: str) -> None:
 
     if student is None:
         await message.answer(
-            f"🔍 Ученик с номером <code>{phone}</code> не найден.\n\n"
-            "<i>💡 Проверьте номер и попробуйте ещё раз.</i>",
+            f"Ученик с номером <code>{phone}</code> не найден.\n\n"
+            "<i>Проверьте номер и попробуйте ещё раз.</i>",
             parse_mode="HTML",
             reply_markup=MAIN_MENU,
         )
@@ -379,23 +451,20 @@ async def _show_student_card(message: Message, phone: str) -> None:
     lines = [
         f"👤 <b>{student.full_name}</b>",
         f"{fmt_contact_links(student.phone, student.telegram_username)}",
-        f"📚 Всего занятий: <b>{len(bookings)}</b>",
+        f"Всего занятий: <b>{len(bookings)}</b>",
     ]
 
     if not bookings:
-        lines.append(f"\n{DIVIDER}\n\n<i>История занятий пуста.</i>")
+        lines.append("\n<i>История занятий пуста.</i>")
     else:
-        lines.append(f"\n📖 <b>История занятий:</b>")
+        lines.append("\n<b>История:</b>\n")
         for b in bookings[:10]:
             icon = STATUS_EMOJI.get(b.status.value, "❓")
             lines.append(
-                f"\n{DIVIDER}\n"
-                f"{icon} <b>#{b.id}</b> • {fmt_full(b.appointment_time)}\n"
-                f"   {b.service_type}"
+                f"{icon} 🕒 {fmt_full(b.appointment_time)} — {b.service_type}"
             )
         if len(bookings) > 10:
-            lines.append(f"\n<i>… и ещё {len(bookings) - 10} записей</i>")
-        lines.append(f"\n{DIVIDER}")
+            lines.append(f"\n<i>… и ещё {len(bookings) - 10}</i>")
 
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=MAIN_MENU)
 
@@ -407,15 +476,13 @@ async def _show_student_card(message: Message, phone: str) -> None:
 
 def _settings_text(tutor: Tutor) -> str:
     icon = "🟢" if tutor.is_active else "🔴"
-    status = "Активен — записи принимаются" if tutor.is_active else "Неактивен — новые записи заблокированы"
+    status = "Активен — записи принимаются" if tutor.is_active else "Неактивен — записи заблокированы"
     return (
-        f"⚙️ <b>Настройки</b>\n"
-        f"{DIVIDER}\n\n"
-        f"📛 Имя: <b>{tutor.name}</b>\n"
-        f"🆔 Telegram ID: <code>{tutor.tg_id}</code>\n"
-        f"{icon} Статус: <b>{status}</b>\n\n"
-        f"<i>💡 Нажмите кнопку ниже, чтобы изменить статус.\n"
-        f"Если вы неактивны, сайт не принимает записи.</i>"
+        f"⚙️ <b>Настройки</b>\n\n"
+        f"👤 <b>{tutor.name}</b>\n"
+        f"{icon} {status}\n\n"
+        f"<i>Нажмите кнопку ниже, чтобы изменить статус.\n"
+        f"В неактивном режиме сайт не принимает записи.</i>"
     )
 
 
@@ -479,11 +546,11 @@ async def cmd_today(message: Message, state: FSMContext) -> None:
 
     if not bookings:
         await message.answer(
-            f"{greeting}! 👋\n\n"
+            f"{greeting}!\n\n"
             f"📅 <b>{fmt_date(now)}</b>\n\n"
-            "🎉 На сегодня занятий нет.\n"
-            "Отдыхайте или проверьте расписание на неделю!\n\n"
-            "<i>💡 Нажмите «📅 Расписание» для просмотра всех записей.</i>",
+            "На сегодня занятий нет.\n"
+            "Новые записи появятся автоматически.\n\n"
+            "<i>Нажмите «📅 Расписание» для просмотра.</i>",
             parse_mode="HTML",
             reply_markup=MAIN_MENU,
         )
@@ -493,17 +560,15 @@ async def cmd_today(message: Message, state: FSMContext) -> None:
     conf = sum(1 for b in bookings if b.status == BookingStatus.CONFIRMED)
 
     lines = [
-        f"{greeting}! 👋",
+        f"{greeting}!",
         f"\n📅 <b>{fmt_date(now)}</b>\n",
-        f"📋 Занятий: <b>{len(bookings)}</b>  (🟢 {conf} │ 🟡 {pend})",
+        f"Занятий: <b>{len(bookings)}</b>  (🟢 {conf} · 🟡 {pend})\n",
     ]
 
     for b in bookings:
-        lines.append(f"\n{DIVIDER}")
         lines.append(fmt_booking_compact(b))
 
-    lines.append(f"\n{DIVIDER}")
-    lines.append("\n<i>💡 Используйте «📅 Расписание» для управления записями.</i>")
+    lines.append("\n<i>Нажмите «📅 Расписание» для управления.</i>")
 
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=MAIN_MENU)
 
@@ -540,12 +605,11 @@ async def cb_confirm(callback: CallbackQuery) -> None:
         await session.commit()
 
     await callback.message.edit_text(
-        f"🟢 <b>Запись #{booking_id} подтверждена</b>\n\n"
-        f"✅ Обработал: вы\n"
-        f"🕐 {fmt_full(now)}",
+        f"🟢 <b>Запись подтверждена</b>\n\n"
+        f"🕒 {fmt_full(now)}",
         parse_mode="HTML",
     )
-    await callback.answer("✅ Подтверждено")
+    await callback.answer("Подтверждено")
     logger.info("Booking #%d confirmed by tg_id=%d", booking_id, callback.from_user.id)
 
 
@@ -572,8 +636,8 @@ async def cb_cancel_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(cancel_booking_id=booking_id)
 
     await callback.message.answer(
-        f"🔴 <b>Отмена записи #{booking_id}</b>\n\n"
-        "Пожалуйста, напишите причину отмены занятия.\n"
+        "🔴 <b>Отмена записи</b>\n\n"
+        "Напишите причину отмены.\n"
         "<i>Она будет использована для уведомления ученика.</i>\n\n"
         "Нажмите <b>❌ Отмена действия</b> чтобы вернуться.",
         parse_mode="HTML",
@@ -587,7 +651,7 @@ async def cmd_cancel_abort(message: Message, state: FSMContext) -> None:
     """Abort the cancellation flow and return to the main menu."""
     await state.clear()
     await message.answer(
-        "↩️ Отмена отменена. Возвращаю в главное меню.",
+        "Действие отменено.",
         parse_mode="HTML",
         reply_markup=MAIN_MENU,
     )
@@ -603,13 +667,12 @@ async def process_cancel_reason(message: Message, state: FSMContext) -> None:
 
     if not booking_id:
         await message.answer(
-            "⚠️ Не удалось определить запись. Попробуйте ещё раз из расписания.",
+            "Не удалось определить запись. Попробуйте ещё раз из расписания.",
             parse_mode="HTML",
             reply_markup=MAIN_MENU,
         )
         return
 
-    # ── Cancel in DB ─────────────────────────────────────────────────
     async with async_session_factory() as session:
         result = await session.execute(
             select(Booking)
@@ -620,13 +683,13 @@ async def process_cancel_reason(message: Message, state: FSMContext) -> None:
 
         if booking is None:
             await message.answer(
-                "⚠️ Запись не найдена.", parse_mode="HTML", reply_markup=MAIN_MENU,
+                "Запись не найдена.", parse_mode="HTML", reply_markup=MAIN_MENU,
             )
             return
 
         if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
             await message.answer(
-                "⚠️ Эта запись уже обработана.", parse_mode="HTML", reply_markup=MAIN_MENU,
+                "Эта запись уже обработана.", parse_mode="HTML", reply_markup=MAIN_MENU,
             )
             return
 
@@ -639,36 +702,22 @@ async def process_cancel_reason(message: Message, state: FSMContext) -> None:
 
     now = datetime.now(MSK)
 
-    # ── Build the notification template for the tutor ────────────────
-    prefilled_text = (
-        f"Здравствуйте, {student_name}! "
-        f"К сожалению, я вынужден отменить наше занятие "
-        f"по причине: {reason}. Извините за неудобства!"
-    )
-
     lines = [
-        f"🔴 <b>Запись #{booking_id} отменена</b>",
-        f"{DIVIDER}\n",
-        f"❌ Обработал: вы",
-        f"🕐 {fmt_full(now)}",
-        f"📝 Причина: <i>{reason}</i>\n",
+        f"🔴 <b>Запись отменена</b>\n",
+        f"🕒 {fmt_full(now)}",
+        f"Причина: <i>{reason}</i>",
+        f"👤 {student_name}",
     ]
 
     # Build the "notify student" button
     if tg_username:
         clean = tg_username.lstrip("@")
-        encoded = urllib.parse.quote(prefilled_text)
         link = f"https://t.me/{clean}"
-        lines.append(f"👤 Ученик: <b>{student_name}</b>")
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="💬 Написать ученику",
-                url=link,
-            )],
+            [InlineKeyboardButton(text="💬 Написать", url=link)],
         ])
     else:
-        lines.append(f"👤 Ученик: <b>{student_name}</b>")
-        lines.append("<i>Telegram ученика не указан — уведомите вручную.</i>")
+        lines.append("<i>Telegram не указан — уведомите вручную.</i>")
         kb = None
 
     await message.answer(
@@ -705,19 +754,26 @@ async def cb_detail(callback: CallbackQuery) -> None:
     icon = STATUS_EMOJI.get(booking.status.value, "❓")
     label = STATUS_LABEL.get(booking.status.value, booking.status.value)
 
+    # Build inline contact button if available
+    kb_rows = []
+    if tg_user:
+        clean = tg_user.lstrip("@")
+        kb_rows.append([InlineKeyboardButton(
+            text="💬 Написать", url=f"https://t.me/{clean}",
+        )])
+    detail_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
+
     text = (
-        f"📌 <b>Запись #{booking.id}</b>\n"
-        f"{DIVIDER}\n\n"
-        f"👤 Ученик: <b>{name}</b>\n"
+        f"🕒 <b>{fmt_time(booking.appointment_time)}</b> — "
+        f"{fmt_date_dot(booking.appointment_time)}\n\n"
+        f"👤 <b>{name}</b>\n"
         f"{fmt_contact_links(phone, tg_user)}\n\n"
-        f"📚 Курс: {booking.service_type}\n"
-        f"🕒 Время: {fmt_full(booking.appointment_time)}\n"
-        f"{icon} Статус: <b>{label}</b>\n"
-        f"📅 Создана: {fmt_full(booking.created_at)}\n\n"
-        f"{DIVIDER}"
+        f"{booking.service_type}\n"
+        f"{icon} {label}\n\n"
+        f"<i>Создана: {fmt_full(booking.created_at)}</i>"
     )
 
-    await callback.message.answer(text, parse_mode="HTML")
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=detail_kb)
     await callback.answer()
 
 
