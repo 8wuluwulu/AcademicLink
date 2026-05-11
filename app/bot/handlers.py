@@ -660,8 +660,18 @@ async def cb_confirm(callback: CallbackQuery) -> None:
     booking_id = int(callback.data.split(":")[1])
     now = datetime.now(MSK)
 
+    student_tg_id = None
+    appt_text = ""
+    service = ""
+
     async with async_session_factory() as session:
-        booking = await session.get(Booking, booking_id)
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student))
+        )
+        booking = result.scalar_one_or_none()
+
         if booking is None:
             await callback.answer("Запись не найдена.", show_alert=True)
             return
@@ -673,6 +683,12 @@ async def cb_confirm(callback: CallbackQuery) -> None:
         booking.status = BookingStatus.CONFIRMED
         await session.commit()
 
+        # Collect student info for notification
+        if booking.student and booking.student.telegram_id:
+            student_tg_id = booking.student.telegram_id
+        appt_text = fmt_full(booking.appointment_time)
+        service = booking.service_type
+
     await callback.message.edit_text(
         f"🟢 <b>Запись подтверждена</b>\n\n"
         f"🕒 {fmt_full(now)}",
@@ -680,6 +696,32 @@ async def cb_confirm(callback: CallbackQuery) -> None:
     )
     await callback.answer("Подтверждено")
     logger.info("Booking #%d confirmed by tg_id=%d", booking_id, callback.from_user.id)
+
+    # ── Notify student via Telegram ──────────────────────────────
+    if student_tg_id:
+        from app.core.bot import get_bot
+
+        bot = get_bot()
+        if bot:
+            text = (
+                f"🟢 <b>Ваше занятие подтверждено!</b>\n\n"
+                f"🕒 {appt_text}\n"
+                f"📚 {service}\n\n"
+                f"<i>До встречи!</i>"
+            )
+            try:
+                await bot.send_message(
+                    chat_id=student_tg_id, text=text, parse_mode="HTML",
+                )
+                logger.info(
+                    "Student tg_id=%d notified about confirmation of booking #%d",
+                    student_tg_id, booking_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to notify student tg_id=%d: %s",
+                    student_tg_id, exc,
+                )
 
 
 # ── Cancel (Immediate with Inline Confirmation) ──────────────────────
@@ -720,7 +762,11 @@ async def cb_cancel_init(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("cancel_confirm:"))
 async def cb_cancel_confirm(callback: CallbackQuery) -> None:
     booking_id = int(callback.data.split(":")[1])
-    
+
+    student_tg_id = None
+    appt_text = ""
+    service = ""
+
     async with async_session_factory() as session:
         result = await session.execute(
             select(Booking)
@@ -739,15 +785,21 @@ async def cb_cancel_confirm(callback: CallbackQuery) -> None:
 
         booking.status = BookingStatus.CANCELLED
         await session.commit()
-        
+
         tg_username = booking.student.telegram_username if booking.student else None
+
+        # Collect student info for notification
+        if booking.student and booking.student.telegram_id:
+            student_tg_id = booking.student.telegram_id
+        appt_text = fmt_full(booking.appointment_time)
+        service = booking.service_type
 
     # Build the "notify student" button
     kb_rows = []
     if tg_username:
         clean = tg_username.lstrip("@")
         kb_rows.append([InlineKeyboardButton(text="💬 Написать ученику", url=f"https://t.me/{clean}")])
-    
+
     await callback.message.edit_text(
         "🔴 <b>Запись отменена</b>\n\n"
         "Вы можете написать ученику, чтобы объяснить причину.",
@@ -756,6 +808,32 @@ async def cb_cancel_confirm(callback: CallbackQuery) -> None:
     )
     await callback.answer("Запись отменена")
     logger.info("Booking #%d cancelled by tg_id=%d", booking_id, callback.from_user.id)
+
+    # ── Notify student via Telegram ──────────────────────────────
+    if student_tg_id:
+        from app.core.bot import get_bot
+
+        bot = get_bot()
+        if bot:
+            text = (
+                f"🔴 <b>Ваше занятие отменено</b>\n\n"
+                f"🕒 {appt_text}\n"
+                f"📚 {service}\n\n"
+                f"<i>Свяжитесь с репетитором для уточнения деталей.</i>"
+            )
+            try:
+                await bot.send_message(
+                    chat_id=student_tg_id, text=text, parse_mode="HTML",
+                )
+                logger.info(
+                    "Student tg_id=%d notified about cancellation of booking #%d",
+                    student_tg_id, booking_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to notify student tg_id=%d: %s",
+                    student_tg_id, exc,
+                )
 
 
 @router.callback_query(F.data == "cancel_abort")

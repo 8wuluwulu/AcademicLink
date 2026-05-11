@@ -7,15 +7,99 @@ from both the FastAPI API layer and the Telegram bot layer.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Booking, BookingStatus, Student, Tutor
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Student, Tutor
 
 logger = logging.getLogger(__name__)
+
+# ── Validation Helpers ───────────────────────────────────────────────
+
+LESSON_DURATION_MINUTES = 60  # default lesson window for overlap check
+
+
+async def check_availability(
+    session: AsyncSession,
+    *,
+    tutor_id: int,
+    appointment_time: datetime,
+) -> None:
+    """
+    Verify that ``appointment_time`` falls within one of the tutor's
+    :class:`AvailabilitySlot` entries.
+
+    Checks are based on the **weekday** (0=Monday … 6=Sunday) and
+    the slot's ``start_time`` / ``end_time`` boundaries.
+
+    Raises
+    ------
+    ValueError
+        If the tutor has no availability slot covering the requested time.
+    """
+    weekday = appointment_time.weekday()  # 0-6
+    appt_time = appointment_time.time()
+
+    stmt = select(AvailabilitySlot).where(
+        AvailabilitySlot.tutor_id == tutor_id,
+        AvailabilitySlot.weekday == weekday,
+        AvailabilitySlot.start_time <= appt_time,
+        AvailabilitySlot.end_time > appt_time,
+    )
+    result = await session.execute(stmt)
+    slot = result.scalar_one_or_none()
+
+    if slot is None:
+        day_names = [
+            "Понедельник", "Вторник", "Среда", "Четверг",
+            "Пятница", "Суббота", "Воскресенье",
+        ]
+        raise ValueError(
+            f"Репетитор не принимает в это время. "
+            f"{day_names[weekday]} {appt_time:%H:%M} не входит "
+            f"ни в один слот доступности."
+        )
+
+
+async def check_double_booking(
+    session: AsyncSession,
+    *,
+    tutor_id: int,
+    appointment_time: datetime,
+) -> None:
+    """
+    Ensure no CONFIRMED booking exists for the same tutor within
+    a ±60-minute window around ``appointment_time``.
+
+    Raises
+    ------
+    ValueError
+        If an overlapping confirmed booking is found.
+    """
+    window_start = appointment_time - timedelta(minutes=LESSON_DURATION_MINUTES)
+    window_end = appointment_time + timedelta(minutes=LESSON_DURATION_MINUTES)
+
+    stmt = select(Booking).where(
+        Booking.tutor_id == tutor_id,
+        Booking.status == BookingStatus.CONFIRMED,
+        Booking.appointment_time >= window_start,
+        Booking.appointment_time < window_end,
+    )
+    result = await session.execute(stmt)
+    conflict = result.scalar_one_or_none()
+
+    if conflict is not None:
+        raise ValueError(
+            f"Временной конфликт: у репетитора уже есть подтверждённое "
+            f"занятие в {conflict.appointment_time:%d.%m.%Y %H:%M}. "
+            f"Выберите другое время (минимум 60 минут между занятиями)."
+        )
+
+
+# ── Main Service Function ───────────────────────────────────────────
 
 
 async def create_booking_from_web(
@@ -39,14 +123,16 @@ async def create_booking_from_web(
     2. Resolve the target ``Tutor``:
        - If *tutor_id* is provided (multi-tenant), look up that specific tutor.
        - Otherwise, pick the first active tutor (single-tutor MVP fallback).
-    3. Create a ``Booking`` with ``PENDING`` status.
-    4. Commit and return the booking with relationships loaded.
+    3. **Availability check**: verify the time falls within a tutor's slot.
+    4. **Overlap check**: ensure no confirmed booking within ±60 min.
+    5. Create a ``Booking`` with ``PENDING`` status.
+    6. Commit and return the booking with relationships loaded.
 
     Raises
     ------
     ValueError
-        If the requested tutor is not found, is inactive, or no active
-        tutor exists in the database.
+        If the requested tutor is not found, is inactive, no active
+        tutor exists, the slot is unavailable, or there is a time conflict.
     """
     # ── 0. Normalize appointment_time to UTC-aware ────────────────────
     if appointment_time.tzinfo is None:
@@ -110,7 +196,17 @@ async def create_booking_from_web(
                 "Run ensure_tutor_exists() during startup to seed a default tutor."
             )
 
-    # ── 3. Create booking ────────────────────────────────────────────
+    # ── 3. Availability check ────────────────────────────────────────
+    await check_availability(
+        session, tutor_id=tutor.id, appointment_time=appointment_time,
+    )
+
+    # ── 4. Double-booking / overlap check ────────────────────────────
+    await check_double_booking(
+        session, tutor_id=tutor.id, appointment_time=appointment_time,
+    )
+
+    # ── 5. Create booking ────────────────────────────────────────────
     booking = Booking(
         student_id=student.id,
         tutor_id=tutor.id,

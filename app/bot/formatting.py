@@ -26,11 +26,19 @@ MSK = timezone(timedelta(hours=3))
 # ── Visual Constants ─────────────────────────────────────────────────
 PAGE_SIZE = 5
 
-STATUS_EMOJI = {"PENDING": "🟡", "CONFIRMED": "🟢", "CANCELLED": "🔴"}
+STATUS_EMOJI = {
+    "PENDING": "🟡",
+    "CONFIRMED": "🟢",
+    "CANCELLED": "🔴",
+    "COMPLETED": "✅",
+    "RESCHEDULED": "🔄",
+}
 STATUS_LABEL = {
     "PENDING": "Ожидает",
     "CONFIRMED": "Подтверждена",
     "CANCELLED": "Отменена",
+    "COMPLETED": "Завершена",
+    "RESCHEDULED": "Перенесена",
 }
 
 # ── Keyboards ────────────────────────────────────────────────────────

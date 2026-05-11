@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
 
+    @property
+    def is_testing(self) -> bool:
+        return self.environment.lower() == "testing"
+
 
 # Singleton — import `settings` everywhere
 settings = Settings()  # type: ignore[call-arg]

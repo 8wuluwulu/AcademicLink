@@ -72,6 +72,22 @@ async def ensure_tutor_exists(session: AsyncSession) -> Tutor:
         is_active=True,
     )
     session.add(tutor)
+    await session.flush()  # Get tutor.id
+
+    # ── Seed default availability slots (Mon-Fri, 09:00-18:00) ──────
+    from app.db.models import AvailabilitySlot
+    from datetime import time
+
+    logger.info("Seeding default availability slots (Mon-Fri, 09:00-18:00)...")
+    for day in range(5):  # 0 = Monday, 4 = Friday
+        slot = AvailabilitySlot(
+            tutor_id=tutor.id,
+            weekday=day,
+            start_time=time(9, 0),
+            end_time=time(18, 0),
+        )
+        session.add(slot)
+
     await session.commit()
     await session.refresh(tutor)
 

@@ -6,19 +6,25 @@ Each request is scoped to a specific ``tutor_id`` (multi-tenant model).
 """
 
 import logging
+import re
 from datetime import datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.database import get_session
 from app.db.models import Booking, Tutor
 from app.services.booking_service import create_booking_from_web
 
 logger = logging.getLogger(__name__)
+
+# ── Phone regex: international format starting with + ────────────────
+_PHONE_RE = re.compile(r"^\+\d{10,15}$")
+
 
 # ── Pydantic Schemas ─────────────────────────────────────────────────
 
@@ -65,6 +71,21 @@ class BookingCreate(BaseModel):
         examples=["johndoe"],
     )
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        """
+        Ensure phone matches international format: ``+`` followed by
+        10–15 digits (covers +7…, +998…, +1…, etc.).
+        """
+        cleaned = v.strip()
+        if not _PHONE_RE.match(cleaned):
+            raise ValueError(
+                "Номер телефона должен быть в международном формате "
+                "(например, +79001234567 или +998901234567)."
+            )
+        return cleaned
+
 
 class BookingRead(BaseModel):
     """Response body returned after a booking is created."""
@@ -76,6 +97,32 @@ class BookingRead(BaseModel):
     )
 
     model_config = {"from_attributes": True}
+
+
+# ── API Key Security Dependency ──────────────────────────────────────
+
+
+async def verify_api_key(
+    x_api_key: str = Header(
+        ...,
+        alias="X-API-Key",
+        description="API key for authentication",
+    ),
+) -> str:
+    """
+    Validate the ``X-API-Key`` header against ``settings.secret_key``.
+
+    Raises
+    ------
+    HTTPException(403)
+        If the provided key does not match the configured secret.
+    """
+    if x_api_key != settings.secret_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or missing API key.",
+        )
+    return x_api_key
 
 
 # ── Tutor Notification ───────────────────────────────────────────────
@@ -162,6 +209,7 @@ async def create_booking(
     payload: BookingCreate,
     request: Request,
     session: AsyncSession = Depends(get_session),
+    _api_key: str = Depends(verify_api_key),
 ) -> BookingRead:
     """
     Create a booking for a student with a specific tutor.
@@ -169,6 +217,8 @@ async def create_booking(
     The endpoint validates the request body, delegates to the booking
     service, triggers a Telegram notification, and returns the
     created booking ID.
+
+    Requires a valid ``X-API-Key`` header.
     """
     try:
         booking = await create_booking_from_web(

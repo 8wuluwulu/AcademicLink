@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AcademicLink | Тестовая запись</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg: #f9fafb;
+            --card-bg: #ffffff;
+            --text: #111827;
+            --text-muted: #6b7280;
+            --border: #e5e7eb;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            padding: 32px;
+            width: 100%;
+            max-width: 450px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 6px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 15px;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+
+        .api-key-section {
+            background-color: #fefce8;
+            border: 1px solid #fef08a;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            width: 100%;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 8px;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        #result {
+            margin-top: 20px;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .success {
+            background-color: #f0fdf4;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+
+        .error {
+            background-color: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>AcademicLink</h1>
+    <p class="subtitle">Форма тестовой записи студента</p>
+
+    <div class="api-key-section">
+        <label for="apiKey">X-API-Key (из .env)</label>
+        <input type="password" id="apiKey" value="change-me" placeholder="Введите ваш SECRET_KEY">
+    </div>
+
+    <form id="bookingForm">
+        <div class="form-group">
+            <label for="fullName">ФИО студента</label>
+            <input type="text" id="fullName" value="Иван Иванов" required>
+        </div>
+
+        <div class="form-group">
+            <label for="phone">Телефон (международный формат)</label>
+            <input type="text" id="phone" value="+79001234567" required>
+        </div>
+
+        <div class="form-group">
+            <label for="serviceType">Тип услуги</label>
+            <input type="text" id="serviceType" value="Подготовка к IELTS" required>
+        </div>
+
+        <div class="form-group">
+            <label for="appointmentTime">Дата и время</label>
+            <input type="datetime-local" id="appointmentTime" required>
+        </div>
+
+        <div class="form-group">
+            <label for="tutorId">ID репетитора</label>
+            <input type="number" id="tutorId" value="1" required>
+        </div>
+
+        <div class="form-group">
+            <label for="telegramUsername">Telegram @username (необязательно)</label>
+            <input type="text" id="telegramUsername" placeholder="johndoe">
+        </div>
+
+        <button type="submit" id="submitBtn">Записаться</button>
+    </form>
+
+    <div id="result"></div>
+</div>
+
+<script>
+    // Устанавливаем время на завтра по умолчанию
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(12, 0, 0, 0);
+    document.getElementById('appointmentTime').value = tomorrow.toISOString().slice(0, 16);
+
+    const form = document.getElementById('bookingForm');
+    const resultDiv = document.getElementById('result');
+    const submitBtn = document.getElementById('submitBtn');
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        resultDiv.style.display = 'none';
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Отправка...';
+
+        const payload = {
+            full_name: document.getElementById('fullName').value,
+            phone: document.getElementById('phone').value,
+            service_type: document.getElementById('serviceType').value,
+            appointment_time: new Date(document.getElementById('appointmentTime').value).toISOString(),
+            tutor_id: parseInt(document.getElementById('tutorId').value),
+            telegram_username: document.getElementById('telegramUsername').value || null
+        };
+
+        const apiKey = document.getElementById('apiKey').value;
+
+        try {
+            const response = await fetch('http://localhost:8000/api/v1/bookings/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': apiKey
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            resultDiv.style.display = 'block';
+            if (response.ok) {
+                resultDiv.className = 'success';
+                resultDiv.textContent = '✅ Успешно! ID записи: ' + data.id + '\nПроверьте Telegram-бота репетитора.';
+            } else {
+                resultDiv.className = 'error';
+                resultDiv.textContent = '❌ Ошибка (' + response.status + '):\n' + (data.detail || JSON.stringify(data, null, 2));
+            }
+        } catch (error) {
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'error';
+            resultDiv.textContent = '❌ Ошибка сети: Не удалось подключиться к серверу (проверьте, что main.py запущен).';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Записаться';
+        }
+    });
+</script>
+
+</body>
+</html>
