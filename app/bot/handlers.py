@@ -49,7 +49,7 @@ from app.bot.formatting import (
 )
 
 from app.db.database import async_session_factory
-from app.db.models import Booking, BookingStatus, Student, Tutor
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Student, Tutor, TutorAbsence
 
 logger = logging.getLogger(__name__)
 router = Router(name="main_router")
@@ -64,6 +64,15 @@ class StudentSearch(StatesGroup):
 
 class StudentManagement(StatesGroup):
     confirm_delete = State()
+
+
+class TutorAbsenceStates(StatesGroup):
+    waiting_start = State()
+    waiting_end = State()
+    waiting_reason = State()
+
+
+
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -539,28 +548,48 @@ async def _show_student_card(message: Message, phone: str) -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════
-#  ⚙️ Настройки — profile + toggle
+# ⚙️ Настройки — profile + toggle
 # ═════════════════════════════════════════════════════════════════════
 
 
-def _settings_text(tutor: Tutor) -> str:
+def _settings_text(tutor: Tutor, slots: list[AvailabilitySlot]) -> str:
     icon = "🟢" if tutor.is_active else "🔴"
     status = "Активен — записи принимаются" if tutor.is_active else "Неактивен — записи заблокированы"
+
+    days_map = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
+
+    # Group slots by weekday
+    by_day: dict[int, list[AvailabilitySlot]] = {}
+    for s in slots:
+        by_day.setdefault(s.weekday, []).append(s)
+
+    if not by_day:
+        schedule_lines = "<i>Нет настроенных слотов. Запись заблокирована.</i>"
+    else:
+        lines = []
+        for day in sorted(by_day):
+            day_slots = by_day[day]
+            windows = ", ".join(
+                f"{s.start_time:%H:%M}–{s.end_time:%H:%M}" for s in day_slots
+            )
+            lines.append(f"  {days_map[day]}: {windows}")
+        schedule_lines = "\n".join(lines)
+
     return (
         f"⚙️ <b>Настройки</b>\n\n"
         f"👤 <b>{tutor.name}</b>\n"
         f"{icon} {status}\n\n"
-        f"<i>Нажмите кнопку ниже, чтобы изменить статус.\n"
-        f"В неактивном режиме сайт не принимает записи.</i>"
+        f"⏰ <b>Рабочие часы:</b>\n"
+        f"{schedule_lines}\n\n"
+        f"<i>Сайт принимает записи только в этих интервалах,\n"
+        f"если там нет другого урока или «Отсутствия».</i>"
     )
 
 
-def _toggle_kb(tutor: Tutor) -> InlineKeyboardMarkup:
-    from aiogram.types import InlineKeyboardButton
-
-    text = "🔴 Приостановить приём" if tutor.is_active else "🟢 Возобновить приём"
+def _settings_kb(tutor: Tutor) -> InlineKeyboardMarkup:
+    toggle_text = "🔴 Приостановить приём" if tutor.is_active else "🟢 Возоновить приём"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=text, callback_data=f"toggle:{tutor.id}")],
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"toggle:{tutor.id}")],
     ])
 
 
@@ -573,9 +602,286 @@ async def cmd_settings(message: Message, state: FSMContext) -> None:
         if tutor is None:
             await message.answer(_NOT_REGISTERED, parse_mode="HTML")
             return
+
+        result = await session.execute(
+            select(AvailabilitySlot)
+            .where(AvailabilitySlot.tutor_id == tutor.id)
+            .order_by(AvailabilitySlot.weekday, AvailabilitySlot.start_time)
+        )
+        slots = result.scalars().all()
+
     await message.answer(
-        _settings_text(tutor), parse_mode="HTML", reply_markup=_toggle_kb(tutor),
+        _settings_text(tutor, slots), parse_mode="HTML", reply_markup=_settings_kb(tutor),
     )
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  📅 Отсутствие — sick leave / vacation management
+# ═════════════════════════════════════════════════════════════════════
+
+
+@router.message(F.text == "📅 Отсутствие")
+async def cmd_absence(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor is None:
+            await message.answer(_NOT_REGISTERED, parse_mode="HTML")
+            return
+
+        # Show upcoming absences
+        now = datetime.now(timezone.utc)
+        result = await session.execute(
+            select(TutorAbsence)
+            .where(
+                TutorAbsence.tutor_id == tutor.id,
+                TutorAbsence.end_time >= now
+            )
+            .order_by(TutorAbsence.start_time)
+        )
+        absences = result.scalars().all()
+
+    lines = ["📅 <b>Моё отсутствие</b>\n"]
+    if not absences:
+        lines.append("У вас нет запланированных периодов отсутствия.")
+    else:
+        for a in absences:
+            reason = f" ({a.reason})" if a.reason else ""
+            lines.append(
+                f"• {fmt_full(a.start_time)} — {fmt_full(a.end_time)}{reason}\n"
+                f"  /del_absence_{a.id}"
+            )
+
+    lines.append("\n<i>Добавьте период (болезнь, отпуск), чтобы временно закрыть запись.</i>")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить период", callback_data="add_absence_init")],
+        [InlineKeyboardButton(text="⚡️ Занять время (сегодня)", callback_data="quick_block_today")],
+    ])
+
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+
+
+# ── Absence Management Callbacks ─────────────────────────────────────
+
+
+@router.callback_query(F.data == "quick_block_today")
+async def cb_quick_block_today(callback: CallbackQuery) -> None:
+    """Quickly block the rest of the current day."""
+    now_local = datetime.now(MSK)
+    today_weekday = now_local.weekday()
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(callback.from_user.id, session)
+
+        # Find the latest slot end_time for today's weekday
+        result = await session.execute(
+            select(AvailabilitySlot)
+            .where(
+                AvailabilitySlot.tutor_id == tutor.id,
+                AvailabilitySlot.weekday == today_weekday,
+            )
+            .order_by(AvailabilitySlot.end_time.desc())
+            .limit(1)
+        )
+        last_slot = result.scalar_one_or_none()
+
+        if last_slot is None:
+            await callback.answer("Сегодня нет рабочих слотов.", show_alert=True)
+            return
+
+        end_hour = last_slot.end_time.hour
+        end_minute = last_slot.end_time.minute
+        end_of_day = now_local.replace(
+            hour=end_hour, minute=end_minute, second=0, microsecond=0,
+        )
+
+        if now_local >= end_of_day:
+            await callback.answer("Рабочий день уже закончен.", show_alert=True)
+            return
+
+        absence = TutorAbsence(
+            tutor_id=tutor.id,
+            start_time=now_local.astimezone(timezone.utc),
+            end_time=end_of_day.astimezone(timezone.utc),
+            reason="Личные дела (быстрая блокировка)"
+        )
+        session.add(absence)
+
+        # Cancel overlapping
+        stmt = select(Booking).where(
+            Booking.tutor_id == tutor.id,
+            Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+            Booking.appointment_time >= now_local.astimezone(timezone.utc),
+            Booking.appointment_time < end_of_day.astimezone(timezone.utc)
+        ).options(selectinload(Booking.student))
+
+        result = await session.execute(stmt)
+        overlapping = result.scalars().all()
+
+        from app.core.bot import get_bot
+        bot = get_bot()
+        for b in overlapping:
+            b.status = BookingStatus.CANCELLED
+            if b.student and b.student.telegram_id and bot:
+                try:
+                    await bot.send_message(
+                        chat_id=b.student.telegram_id,
+                        text=f"🔴 <b>Занятие отменено</b>\n\nРепетитор занят сегодня до конца дня.\nВаша запись на {fmt_full(b.appointment_time)} отменена.",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
+        await session.commit()
+
+    end_time_str = f"{end_hour:02d}:{end_minute:02d}"
+    await callback.message.answer(
+        f"⚡️ <b>Время занято!</b>\n\nВы заблокировали запись на сегодня до {end_time_str}.\n"
+        f"Отменено записей: <b>{len(overlapping)}</b>",
+        parse_mode="HTML",
+        reply_markup=MAIN_MENU
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_absence_init")
+async def cb_add_absence_init(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(TutorAbsenceStates.waiting_start)
+    await callback.message.answer(
+        "📅 <b>Введите начало отсутствия</b> (ДД.ММ.ГГГГ ЧЧ:ММ)\n"
+        "<i>Например: 15.05.2026 09:00</i>",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+    await callback.answer()
+
+
+@router.message(TutorAbsenceStates.waiting_start)
+async def process_absence_start(message: Message, state: FSMContext) -> None:
+    try:
+        dt = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M").replace(tzinfo=MSK)
+        dt_utc = dt.astimezone(timezone.utc)
+    except ValueError:
+        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ ЧЧ:ММ")
+        return
+
+    await state.update_data(start_time=dt_utc.isoformat())
+    await state.set_state(TutorAbsenceStates.waiting_end)
+    await message.answer(
+        f"✅ Начало: <b>{fmt_full(dt_utc)}</b>\n\n"
+        "📅 <b>Введите окончание отсутствия</b> (ДД.ММ.ГГГГ ЧЧ:ММ)\n"
+        "<i>Например: 16.05.2026 18:00</i>",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+
+
+@router.message(TutorAbsenceStates.waiting_end)
+async def process_absence_end(message: Message, state: FSMContext) -> None:
+    try:
+        dt = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M").replace(tzinfo=MSK)
+        dt_utc = dt.astimezone(timezone.utc)
+    except ValueError:
+        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ ЧЧ:ММ")
+        return
+
+    data = await state.get_data()
+    start_time = datetime.fromisoformat(data["start_time"])
+
+    if dt_utc <= start_time:
+        await message.answer("❌ Окончание должно быть позже начала.")
+        return
+
+    await state.update_data(end_time=dt_utc.isoformat())
+    await state.set_state(TutorAbsenceStates.waiting_reason)
+    await message.answer(
+        f"✅ Окончание: <b>{fmt_full(dt_utc)}</b>\n\n"
+        "📝 <b>Введите причину</b> (необязательно)\n"
+        "<i>Например: Болезнь или Отпуск</i>",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+
+
+@router.message(TutorAbsenceStates.waiting_reason)
+async def process_absence_reason(message: Message, state: FSMContext) -> None:
+    reason = message.text.strip()
+    if reason == "◀️ Назад": # Shouldn't happen if handled globally but just in case
+        return
+
+    data = await state.get_data()
+    start_time = datetime.fromisoformat(data["start_time"])
+    end_time = datetime.fromisoformat(data["end_time"])
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        
+        absence = TutorAbsence(
+            tutor_id=tutor.id,
+            start_time=start_time,
+            end_time=end_time,
+            reason=reason if reason.lower() != "пропустить" else None
+        )
+        session.add(absence)
+        
+        # ── Handle Overlapping Bookings ──────────────────────────────
+        stmt = select(Booking).where(
+            Booking.tutor_id == tutor.id,
+            Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+            Booking.appointment_time >= start_time,
+            Booking.appointment_time < end_time
+        ).options(selectinload(Booking.student))
+        
+        result = await session.execute(stmt)
+        overlapping = result.scalars().all()
+        
+        cancelled_count = len(overlapping)
+        from app.core.bot import get_bot
+        bot = get_bot()
+
+        for b in overlapping:
+            b.status = BookingStatus.CANCELLED
+            
+            # Notify student
+            if b.student and b.student.telegram_id and bot:
+                student_text = (
+                    f"🔴 <b>Занятие отменено</b>\n\n"
+                    f"К сожалению, репетитор будет отсутствовать с {fmt_full(start_time)} по {fmt_full(end_time)}.\n"
+                    f"Причина: {reason}\n\n"
+                    f"Ваша запись на <b>{fmt_full(b.appointment_time)}</b> отменена."
+                )
+                try:
+                    await bot.send_message(chat_id=b.student.telegram_id, text=student_text, parse_mode="HTML")
+                except Exception as exc:
+                    logger.error("Failed to notify student %d: %s", b.student.telegram_id, exc)
+
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ Период отсутствия добавлен. Отменено занятий: <b>{cancelled_count}</b>",
+        reply_markup=MAIN_MENU
+    )
+
+
+@router.message(F.text.startswith("/del_absence_"))
+async def cmd_del_absence(message: Message) -> None:
+    absence_id = int(message.text.split("_")[-1])
+    async with async_session_factory() as session:
+        absence = await session.get(TutorAbsence, absence_id)
+        if absence:
+            tutor = await _get_tutor(message.from_user.id, session)
+            if tutor is None or absence.tutor_id != tutor.id:
+                await message.answer("❌ Ошибка доступа.")
+                return
+            
+            await session.delete(absence)
+            await session.commit()
+            await message.answer("🗑 Период отсутствия удален. Теперь это время снова доступно для записи.")
+        else:
+            await message.answer("❌ Запись не найдена.")
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -910,8 +1216,15 @@ async def cb_toggle(callback: CallbackQuery) -> None:
         await session.commit()
         alert = "🟢 Приём записей возобновлён." if tutor.is_active else "🔴 Приём записей приостановлен."
 
+        result = await session.execute(
+            select(AvailabilitySlot)
+            .where(AvailabilitySlot.tutor_id == tutor.id)
+            .order_by(AvailabilitySlot.weekday, AvailabilitySlot.start_time)
+        )
+        slots = result.scalars().all()
+
     await callback.message.edit_text(
-        _settings_text(tutor), parse_mode="HTML", reply_markup=_toggle_kb(tutor),
+        _settings_text(tutor, slots), parse_mode="HTML", reply_markup=_settings_kb(tutor),
     )
     await callback.answer(alert)
     logger.info("Tutor #%d toggled is_active=%s", tutor_id, tutor.is_active)

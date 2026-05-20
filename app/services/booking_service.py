@@ -13,13 +13,44 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AvailabilitySlot, Booking, BookingStatus, Student, Tutor
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Student, Tutor, TutorAbsence
 
 logger = logging.getLogger(__name__)
 
 # ── Validation Helpers ───────────────────────────────────────────────
 
 LESSON_DURATION_MINUTES = 60  # default lesson window for overlap check
+
+
+async def check_tutor_absence(
+    session: AsyncSession,
+    *,
+    tutor_id: int,
+    appointment_time: datetime,
+) -> None:
+    """
+    Ensure the requested ``appointment_time`` does not overlap
+    with a :class:`TutorAbsence`.
+
+    Raises
+    ------
+    ValueError
+        If the tutor is on absence during the requested time.
+    """
+    stmt = select(TutorAbsence).where(
+        TutorAbsence.tutor_id == tutor_id,
+        TutorAbsence.start_time <= appointment_time,
+        TutorAbsence.end_time > appointment_time,
+    )
+    result = await session.execute(stmt)
+    absence = result.scalar_one_or_none()
+
+    if absence is not None:
+        reason_text = f" ({absence.reason})" if absence.reason else ""
+        raise ValueError(
+            f"Репетитор отсутствует в это время{reason_text}. "
+            f"Выберите другую дату."
+        )
 
 
 async def check_availability(
@@ -29,39 +60,50 @@ async def check_availability(
     appointment_time: datetime,
 ) -> None:
     """
-    Verify that ``appointment_time`` falls within one of the tutor's
-    :class:`AvailabilitySlot` entries.
+    Ensure the requested ``appointment_time`` falls within one of the
+    tutor's :class:`AvailabilitySlot` windows for that weekday.
 
-    Checks are based on the **weekday** (0=Monday … 6=Sunday) and
-    the slot's ``start_time`` / ``end_time`` boundaries.
+    The appointment time is converted to MSK (the tutor's local timezone)
+    before comparing against slot boundaries.
 
     Raises
     ------
     ValueError
-        If the tutor has no availability slot covering the requested time.
+        If the tutor has no slots for the day or the time is outside
+        all defined windows.
     """
-    weekday = appointment_time.weekday()  # 0-6
-    appt_time = appointment_time.time()
+    from app.bot.formatting import MSK
 
+    # Use MSK for validation to match the tutor's local context
+    local_time = appointment_time.astimezone(MSK)
+    weekday = local_time.weekday()
+    local_clock = local_time.time()
+
+    # Query AvailabilitySlot for this tutor + weekday
     stmt = select(AvailabilitySlot).where(
         AvailabilitySlot.tutor_id == tutor_id,
         AvailabilitySlot.weekday == weekday,
-        AvailabilitySlot.start_time <= appt_time,
-        AvailabilitySlot.end_time > appt_time,
     )
     result = await session.execute(stmt)
-    slot = result.scalar_one_or_none()
+    slots = result.scalars().all()
 
-    if slot is None:
-        day_names = [
-            "Понедельник", "Вторник", "Среда", "Четверг",
-            "Пятница", "Суббота", "Воскресенье",
-        ]
+    if not slots:
         raise ValueError(
-            f"Репетитор не принимает в это время. "
-            f"{day_names[weekday]} {appt_time:%H:%M} не входит "
-            f"ни в один слот доступности."
+            "Репетитор не принимает в этот день. Выберите другой день."
         )
+
+    # Check if time falls within ANY slot for that day
+    for slot in slots:
+        if slot.start_time <= local_clock < slot.end_time:
+            return  # valid
+
+    windows = ", ".join(
+        f"{s.start_time:%H:%M}–{s.end_time:%H:%M}" for s in slots
+    )
+    raise ValueError(
+        f"Репетитор не принимает в {local_clock:%H:%M}. "
+        f"Доступные окна: {windows}."
+    )
 
 
 async def check_double_booking(
@@ -71,20 +113,24 @@ async def check_double_booking(
     appointment_time: datetime,
 ) -> None:
     """
-    Ensure no CONFIRMED booking exists for the same tutor within
-    a ±60-minute window around ``appointment_time``.
+    Ensure no CONFIRMED or PENDING booking exists for the same tutor
+    within a ±60-minute window around ``appointment_time``.
+
+    Checking both statuses prevents the "race condition" where multiple
+    students could book the same slot while all bookings are still
+    PENDING.  This enforces first-come, first-served semantics.
 
     Raises
     ------
     ValueError
-        If an overlapping confirmed booking is found.
+        If an overlapping active booking is found.
     """
     window_start = appointment_time - timedelta(minutes=LESSON_DURATION_MINUTES)
     window_end = appointment_time + timedelta(minutes=LESSON_DURATION_MINUTES)
 
     stmt = select(Booking).where(
         Booking.tutor_id == tutor_id,
-        Booking.status == BookingStatus.CONFIRMED,
+        Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.PENDING]),
         Booking.appointment_time >= window_start,
         Booking.appointment_time < window_end,
     )
@@ -93,8 +139,8 @@ async def check_double_booking(
 
     if conflict is not None:
         raise ValueError(
-            f"Временной конфликт: у репетитора уже есть подтверждённое "
-            f"занятие в {conflict.appointment_time:%d.%m.%Y %H:%M}. "
+            f"Временной конфликт: у репетитора уже есть занятие "
+            f"в {conflict.appointment_time:%d.%m.%Y %H:%M}. "
             f"Выберите другое время (минимум 60 минут между занятиями)."
         )
 
@@ -201,7 +247,12 @@ async def create_booking_from_web(
         session, tutor_id=tutor.id, appointment_time=appointment_time,
     )
 
-    # ── 4. Double-booking / overlap check ────────────────────────────
+    # ── 4. Absence check ─────────────────────────────────────────────
+    await check_tutor_absence(
+        session, tutor_id=tutor.id, appointment_time=appointment_time,
+    )
+
+    # ── 5. Double-booking / overlap check ────────────────────────────
     await check_double_booking(
         session, tutor_id=tutor.id, appointment_time=appointment_time,
     )

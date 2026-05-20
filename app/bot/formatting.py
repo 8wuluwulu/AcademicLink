@@ -47,7 +47,7 @@ MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🏠 Главная"), KeyboardButton(text="📅 Расписание")],
         [KeyboardButton(text="🟡 Новые заявки"), KeyboardButton(text="👥 Ученики")],
-        [KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="📅 Отсутствие"), KeyboardButton(text="⚙️ Настройки")],
     ],
     resize_keyboard=True,
     input_field_placeholder="Выберите действие…",

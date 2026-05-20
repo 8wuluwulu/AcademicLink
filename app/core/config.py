@@ -51,7 +51,8 @@ class Settings(BaseSettings):
 
     # --- Scheduler ---
     morning_briefing_hour: int = 8
-    reminder_minutes_before: int = 30
+    reminder_minutes_before: int = 100
+
 
     @property
     def is_production(self) -> bool:

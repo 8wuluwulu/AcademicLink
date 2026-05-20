@@ -131,6 +131,39 @@ class AvailabilitySlot(SQLModel, table=True):
         )
 
 
+# ── TutorAbsence ─────────────────────────────────────────────────────
+class TutorAbsence(SQLModel, table=True):
+    """A period when a tutor is unavailable (e.g. sick leave, vacation)."""
+
+    __tablename__ = "tutor_absences"
+
+    id: int | None = Field(default=None, primary_key=True)
+    tutor_id: int = Field(foreign_key="tutors.id", index=True)
+
+    start_time: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        description="Absence start date/time (UTC)",
+    )
+    end_time: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        description="Absence end date/time (UTC)",
+    )
+    reason: str | None = Field(
+        default=None,
+        sa_type=Text(),
+        description="Optional reason for absence (e.g. 'Sick Leave')",
+    )
+
+    # ── Relationships ────────────────────────────────────────────────
+    tutor: Optional[Tutor] = Relationship()
+
+    def __repr__(self) -> str:
+        return (
+            f"<TutorAbsence tutor={self.tutor_id} "
+            f"from={self.start_time} to={self.end_time}>"
+        )
+
+
 # ── Booking ──────────────────────────────────────────────────────────
 class Booking(SQLModel, table=True):
     """A tutoring session booked by a student with a tutor."""

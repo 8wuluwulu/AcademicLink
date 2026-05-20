@@ -3,10 +3,8 @@ AcademicLink — Background Task Scheduler
 
 Uses APScheduler's ``AsyncIOScheduler`` to run periodic jobs:
 
-1. **Morning Briefing** — daily summary of today's bookings for each tutor.
-2. **Pre-lesson Reminders** — alerts sent N minutes before a lesson starts.
-3. **Automatic Follow-up** — marks lessons as COMPLETED 1 hour after end
-   and sends a feedback prompt to the tutor.
+1. **Pre-lesson Reminders** — alerts sent N minutes before a lesson starts.
+   (Default is 100 minutes / 1h 40m).
 
 The scheduler is started/stopped via the FastAPI lifespan in ``main.py``.
 """
@@ -20,17 +18,12 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.database import async_session_factory
-from app.db.models import Booking, BookingStatus, Tutor
+from app.db.models import Booking, BookingStatus
 
 logger = logging.getLogger(__name__)
 
 # ── Scheduler Instance ───────────────────────────────────────────────
 scheduler = AsyncIOScheduler(timezone="UTC")
-
-# Lesson duration assumption (minutes)
-LESSON_DURATION = 60
-# Follow-up fires this many minutes after lesson END
-FOLLOW_UP_DELAY = 60
 
 
 # ── Helper: get bot safely ───────────────────────────────────────────
@@ -42,107 +35,7 @@ def _get_bot():
 
 
 # ═════════════════════════════════════════════════════════════════════
-#  Job 1: Morning Briefing
-# ═════════════════════════════════════════════════════════════════════
-
-
-async def morning_briefing_job() -> None:
-    """
-    Send every active tutor a summary of their CONFIRMED and PENDING
-    bookings for today.  Runs daily at ``settings.morning_briefing_hour``.
-    """
-    bot = _get_bot()
-    if bot is None:
-        logger.warning("Bot not initialised — skipping morning briefing.")
-        return
-
-    from app.bot.formatting import (
-        STATUS_EMOJI,
-        fmt_booking_compact,
-        fmt_date,
-    )
-
-    now = datetime.now(timezone.utc)
-
-    async with async_session_factory() as session:
-        # Fetch all active tutors
-        result = await session.execute(
-            select(Tutor).where(Tutor.is_active.is_(True))
-        )
-        tutors = result.scalars().all()
-
-        for tutor in tutors:
-            # Today's boundaries in UTC
-            # We use a wide 24-hour window; the tutor sees local times
-            day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day_start + timedelta(days=1)
-
-            result = await session.execute(
-                select(Booking)
-                .where(
-                    Booking.tutor_id == tutor.id,
-                    Booking.status.in_([
-                        BookingStatus.PENDING,
-                        BookingStatus.CONFIRMED,
-                    ]),
-                    Booking.appointment_time >= day_start,
-                    Booking.appointment_time < day_end,
-                )
-                .options(selectinload(Booking.student))
-                .order_by(Booking.appointment_time)
-            )
-            bookings = result.scalars().all()
-
-            if not bookings:
-                text = (
-                    f"☀️ <b>Доброе утро!</b>\n\n"
-                    f"📅 <b>{fmt_date(now)}</b>\n\n"
-                    f"На сегодня занятий нет.\n"
-                    f"Хорошего дня! 🌟"
-                )
-            else:
-                confirmed = sum(
-                    1 for b in bookings
-                    if b.status == BookingStatus.CONFIRMED
-                )
-                pending = sum(
-                    1 for b in bookings
-                    if b.status == BookingStatus.PENDING
-                )
-
-                lines = [
-                    f"☀️ <b>Доброе утро!</b>\n",
-                    f"📅 <b>{fmt_date(now)}</b>\n",
-                    f"Занятий: <b>{len(bookings)}</b>  "
-                    f"(🟢 {confirmed} · 🟡 {pending})\n",
-                ]
-                for b in bookings:
-                    lines.append(fmt_booking_compact(b))
-
-                lines.append(
-                    "\n<i>Отправьте /today для подробностей.</i>"
-                )
-                text = "\n".join(lines)
-
-            try:
-                await bot.send_message(
-                    chat_id=tutor.tg_id, text=text, parse_mode="HTML",
-                )
-                logger.info(
-                    "Morning briefing sent to tutor tg_id=%d (%d bookings)",
-                    tutor.tg_id,
-                    len(bookings),
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to send morning briefing to tg_id=%d: %s",
-                    tutor.tg_id,
-                    exc,
-                )
-
-
-# ═════════════════════════════════════════════════════════════════════
-#  Job 2: Pre-lesson Reminders
+#  Job: Pre-lesson Reminders
 # ═════════════════════════════════════════════════════════════════════
 
 
@@ -243,99 +136,14 @@ async def pre_lesson_reminder_job() -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════
-#  Job 3: Automatic Follow-up
-# ═════════════════════════════════════════════════════════════════════
-
-
-async def follow_up_job() -> None:
-    """
-    Find CONFIRMED bookings whose lesson ended ≥1 hour ago
-    (appointment_time + LESSON_DURATION + FOLLOW_UP_DELAY).
-
-    Marks them as COMPLETED and sends a feedback prompt to the tutor.
-    Uses ``Booking.followed_up_at`` to avoid duplicates.
-    """
-    bot = _get_bot()
-    if bot is None:
-        logger.warning("Bot not initialised — skipping follow-ups.")
-        return
-
-    now = datetime.now(timezone.utc)
-    # A lesson that started at T ends at T + LESSON_DURATION.
-    # Follow-up fires FOLLOW_UP_DELAY minutes after that.
-    cutoff = now - timedelta(minutes=LESSON_DURATION + FOLLOW_UP_DELAY)
-
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(Booking)
-            .where(
-                Booking.status == BookingStatus.CONFIRMED,
-                Booking.followed_up_at.is_(None),
-                Booking.appointment_time <= cutoff,
-            )
-            .options(
-                selectinload(Booking.student),
-                selectinload(Booking.tutor),
-            )
-        )
-        bookings = result.scalars().all()
-
-        for booking in bookings:
-            # Transition to COMPLETED
-            booking.status = BookingStatus.COMPLETED
-            booking.followed_up_at = datetime.now(timezone.utc)
-
-            student_name = (
-                booking.student.full_name if booking.student else "Ученик"
-            )
-
-            if booking.tutor:
-                text = (
-                    f"📝 <b>Как прошло занятие?</b>\n\n"
-                    f"👤 {student_name}\n"
-                    f"📚 {booking.service_type}\n\n"
-                    f"Занятие автоматически отмечено как ✅ завершённое.\n"
-                    f"<i>Отправьте /today для просмотра расписания.</i>"
-                )
-                try:
-                    await bot.send_message(
-                        chat_id=booking.tutor.tg_id,
-                        text=text,
-                        parse_mode="HTML",
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Follow-up to tutor tg_id=%d failed: %s",
-                        booking.tutor.tg_id,
-                        exc,
-                    )
-
-            logger.info(
-                "Booking #%d marked COMPLETED (follow-up sent)", booking.id,
-            )
-
-        await session.commit()
-
-
-# ═════════════════════════════════════════════════════════════════════
 #  Scheduler Setup
 # ═════════════════════════════════════════════════════════════════════
 
 
 def configure_scheduler() -> None:
-    """Register all periodic jobs on the global scheduler instance."""
+    """Register periodic jobs on the global scheduler instance."""
 
-    # Job 1: Morning briefing — daily
-    scheduler.add_job(
-        morning_briefing_job,
-        "cron",
-        hour=settings.morning_briefing_hour,
-        minute=0,
-        id="morning_briefing",
-        replace_existing=True,
-    )
-
-    # Job 2: Pre-lesson reminders — every 5 minutes
+    # Job: Pre-lesson reminders — every 5 minutes
     scheduler.add_job(
         pre_lesson_reminder_job,
         "interval",
@@ -344,17 +152,7 @@ def configure_scheduler() -> None:
         replace_existing=True,
     )
 
-    # Job 3: Automatic follow-up — every 10 minutes
-    scheduler.add_job(
-        follow_up_job,
-        "interval",
-        minutes=10,
-        id="follow_up",
-        replace_existing=True,
-    )
-
     logger.info(
-        "Scheduler configured: morning=%02d:00, reminders=every 5m, "
-        "follow-up=every 10m",
-        settings.morning_briefing_hour,
+        "Scheduler configured: reminders=every 5m (lead time %d min)",
+        settings.reminder_minutes_before,
     )
