@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # ── Validation Helpers ───────────────────────────────────────────────
 
-LESSON_DURATION_MINUTES = 60  # default lesson window for overlap check
+DEFAULT_LESSON_DURATION = 60  # fallback if tutor has no custom setting
 
 
 async def check_tutor_absence(
@@ -111,22 +111,33 @@ async def check_double_booking(
     *,
     tutor_id: int,
     appointment_time: datetime,
+    lesson_duration: int = DEFAULT_LESSON_DURATION,
+    buffer_time: int = 0,
+    exclude_booking_id: int | None = None,
 ) -> None:
     """
     Ensure no CONFIRMED or PENDING booking exists for the same tutor
-    within a ±60-minute window around ``appointment_time``.
+    within a window calculated from the tutor's ``lesson_duration``
+    plus ``buffer_time``.
 
     Checking both statuses prevents the "race condition" where multiple
     students could book the same slot while all bookings are still
     PENDING.  This enforces first-come, first-served semantics.
+
+    Parameters
+    ----------
+    exclude_booking_id
+        If provided, skip this booking ID from the overlap check
+        (used by reschedule to avoid self-conflict).
 
     Raises
     ------
     ValueError
         If an overlapping active booking is found.
     """
-    window_start = appointment_time - timedelta(minutes=LESSON_DURATION_MINUTES)
-    window_end = appointment_time + timedelta(minutes=LESSON_DURATION_MINUTES)
+    total_block = lesson_duration + buffer_time
+    window_start = appointment_time - timedelta(minutes=total_block)
+    window_end = appointment_time + timedelta(minutes=total_block)
 
     stmt = select(Booking).where(
         Booking.tutor_id == tutor_id,
@@ -134,6 +145,8 @@ async def check_double_booking(
         Booking.appointment_time >= window_start,
         Booking.appointment_time < window_end,
     )
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
     result = await session.execute(stmt)
     conflict = result.scalar_one_or_none()
 
@@ -141,7 +154,7 @@ async def check_double_booking(
         raise ValueError(
             f"Временной конфликт: у репетитора уже есть занятие "
             f"в {conflict.appointment_time:%d.%m.%Y %H:%M}. "
-            f"Выберите другое время (минимум 60 минут между занятиями)."
+            f"Выберите другое время (минимум {total_block} минут между занятиями)."
         )
 
 
@@ -254,7 +267,11 @@ async def create_booking_from_web(
 
     # ── 5. Double-booking / overlap check ────────────────────────────
     await check_double_booking(
-        session, tutor_id=tutor.id, appointment_time=appointment_time,
+        session,
+        tutor_id=tutor.id,
+        appointment_time=appointment_time,
+        lesson_duration=tutor.lesson_duration,
+        buffer_time=tutor.buffer_time,
     )
 
     # ── 5. Create booking ────────────────────────────────────────────
@@ -285,5 +302,162 @@ async def create_booking_from_web(
         booking.student_id,
         booking.tutor_id,
         booking.service_type,
+    )
+    return booking
+
+
+async def reschedule_booking(
+    session: AsyncSession,
+    *,
+    booking_id: int,
+    new_appointment_time: datetime,
+) -> tuple[Booking, datetime]:
+    """
+    Reschedule an existing booking to a new date/time.
+
+    Re-runs all validation checks (availability, absence, double-booking)
+    against the new time.  Returns the updated booking **and** the old
+    appointment time so the caller can build a notification message.
+
+    Raises
+    ------
+    ValueError
+        If the booking is not found, already processed, or the new
+        time fails any validation check.
+    """
+    # ── 0. Normalize to UTC ───────────────────────────────────────────
+    if new_appointment_time.tzinfo is None:
+        new_appointment_time = new_appointment_time.replace(tzinfo=timezone.utc)
+
+    # ── 1. Fetch booking ──────────────────────────────────────────────
+    stmt = (
+        select(Booking)
+        .where(Booking.id == booking_id)
+        .options(selectinload(Booking.student), selectinload(Booking.tutor))
+    )
+    result = await session.execute(stmt)
+    booking = result.scalar_one_or_none()
+
+    if booking is None:
+        raise ValueError("Запись не найдена.")
+    if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
+        raise ValueError(
+            f"Нельзя перенести запись со статусом «{booking.status.value}»."
+        )
+
+    tutor = booking.tutor
+    if tutor is None:
+        raise ValueError("Репетитор не найден.")
+
+    # ── 2. Run validations against the NEW time ───────────────────────
+    await check_availability(
+        session, tutor_id=tutor.id, appointment_time=new_appointment_time,
+    )
+    await check_tutor_absence(
+        session, tutor_id=tutor.id, appointment_time=new_appointment_time,
+    )
+    await check_double_booking(
+        session,
+        tutor_id=tutor.id,
+        appointment_time=new_appointment_time,
+        lesson_duration=tutor.lesson_duration,
+        buffer_time=tutor.buffer_time,
+        exclude_booking_id=booking.id,
+    )
+
+    # ── 3. Update booking ─────────────────────────────────────────────
+    old_time = booking.appointment_time
+    booking.appointment_time = new_appointment_time
+    booking.status = BookingStatus.CONFIRMED
+    await session.commit()
+
+    # Refresh with relationships
+    await session.refresh(booking, attribute_names=["student", "tutor"])
+
+    logger.info(
+        "Booking #%d rescheduled from %s to %s",
+        booking.id, old_time, new_appointment_time,
+    )
+    return booking, old_time
+
+
+async def create_booking_internal(
+    session: AsyncSession,
+    *,
+    student_id: int,
+    tutor_id: int,
+    service_type: str,
+    appointment_time: datetime,
+) -> Booking:
+    """
+    Create a CONFIRMED booking initiated by the tutor (internal CRM entry).
+
+    Unlike :func:`create_booking_from_web`, this skips student
+    resolution (the student already exists) and creates the booking
+    as ``CONFIRMED`` immediately.
+
+    Raises
+    ------
+    ValueError
+        If the student/tutor is not found, is inactive, or the
+        time fails any validation check.
+    """
+    # ── 0. Normalize to UTC ───────────────────────────────────────────
+    if appointment_time.tzinfo is None:
+        appointment_time = appointment_time.replace(tzinfo=timezone.utc)
+
+    # ── 1. Resolve student ────────────────────────────────────────────
+    student = await session.get(Student, student_id)
+    if student is None:
+        raise ValueError("Ученик не найден.")
+    if not student.is_active:
+        raise ValueError(f"Ученик «{student.full_name}» архивирован.")
+
+    # ── 2. Resolve tutor ──────────────────────────────────────────────
+    tutor = await session.get(Tutor, tutor_id)
+    if tutor is None:
+        raise ValueError("Репетитор не найден.")
+    if not tutor.is_active:
+        raise ValueError("Репетитор не принимает записи.")
+
+    # ── 3. Validations ────────────────────────────────────────────────
+    await check_availability(
+        session, tutor_id=tutor.id, appointment_time=appointment_time,
+    )
+    await check_tutor_absence(
+        session, tutor_id=tutor.id, appointment_time=appointment_time,
+    )
+    await check_double_booking(
+        session,
+        tutor_id=tutor.id,
+        appointment_time=appointment_time,
+        lesson_duration=tutor.lesson_duration,
+        buffer_time=tutor.buffer_time,
+    )
+
+    # ── 4. Create booking (CONFIRMED — tutor-initiated) ───────────────
+    booking = Booking(
+        student_id=student.id,
+        tutor_id=tutor.id,
+        service_type=service_type,
+        appointment_time=appointment_time,
+        status=BookingStatus.CONFIRMED,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(booking)
+    await session.commit()
+
+    # Re-fetch with relationships
+    stmt = (
+        select(Booking)
+        .where(Booking.id == booking.id)
+        .options(selectinload(Booking.student), selectinload(Booking.tutor))
+    )
+    result = await session.execute(stmt)
+    booking = result.scalar_one()
+
+    logger.info(
+        "Internal booking #%d created — student=%d tutor=%d service=%r",
+        booking.id, booking.student_id, booking.tutor_id, booking.service_type,
     )
     return booking

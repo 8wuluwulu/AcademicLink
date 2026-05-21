@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # --- Scheduler ---
     morning_briefing_hour: int = 8
     reminder_minutes_before: int = 100
+    cancel_safety_hours: int = 2
 
 
     @property

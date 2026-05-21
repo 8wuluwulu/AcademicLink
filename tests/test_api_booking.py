@@ -104,6 +104,7 @@ def app_client(test_session_factory, seed_db):
     # Mock the bot on app.state so notify doesn't fail
     mock_bot = MagicMock()
     mock_bot.send_message = AsyncMock()
+    mock_bot.get_me = AsyncMock(return_value=MagicMock(username="test_bot"))
     app.state.bot = mock_bot
 
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -222,3 +223,24 @@ def test_phone_validation_accepts_valid_formats(app_client):
         assert response.status_code in (201, 400), (
             f"Phone {phone} was rejected with {response.status_code}"
         )
+
+
+def test_create_booking_with_telegram_id(app_client):
+    """Providing telegram_id should successfully save it to the student."""
+    tg_id = 123456789
+    response = app_client.post(
+        "/api/v1/bookings/",
+        json={
+            "full_name": "TG Student",
+            "phone": "+79001112233",
+            "service_type": "Math",
+            "appointment_time": _next_weekday(0),
+            "tutor_id": 1,
+            "telegram_id": tg_id,
+        },
+        headers={"X-API-Key": API_KEY},
+    )
+    assert response.status_code == 201
+    
+    # Verify in DB if possible (though we use overrides, we can check if it returned success)
+    # The service layer is already tested, but this ensures the API passes it through.

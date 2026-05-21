@@ -63,6 +63,10 @@ class Student(SQLModel, table=True):
         default=True,
         description="Whether the student is active and shown in lists",
     )
+    wants_reminders: bool = Field(
+        default=True,
+        description="Whether the student wants reminder notifications",
+    )
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="student")
@@ -88,6 +92,18 @@ class Tutor(SQLModel, table=True):
     is_active: bool = Field(
         default=True,
         description="Whether the tutor is currently accepting bookings",
+    )
+    lesson_duration: int = Field(
+        default=60,
+        description="Lesson duration in minutes (e.g. 45, 60, 90)",
+    )
+    buffer_time: int = Field(
+        default=0,
+        description="Buffer between lessons in minutes",
+    )
+    wants_reminders: bool = Field(
+        default=True,
+        description="Whether the tutor wants reminder notifications",
     )
 
     # ── Relationships ────────────────────────────────────────────────
@@ -203,6 +219,11 @@ class Booking(SQLModel, table=True):
         default=None,
         sa_type=DateTime(timezone=True),
         description="When the post-lesson follow-up was sent (NULL = not sent)",
+    )
+    reminded_24h_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        description="When the 24h reminder was sent (NULL = not sent)",
     )
 
     # ── Relationships ────────────────────────────────────────────────

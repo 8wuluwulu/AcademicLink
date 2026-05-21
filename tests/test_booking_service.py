@@ -303,3 +303,50 @@ async def test_create_booking_rejected_pending_overlap(seeded_session):
             appointment_time=appt + timedelta(minutes=30),
             tutor_id=1,
         )
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Dynamic lesson_duration tests
+# ═════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_double_booking_custom_short_duration(seeded_session):
+    """With 45-min lesson, a booking at +50 min should NOT conflict."""
+    appt = _next_weekday(0)  # Monday 10:00
+
+    booking = Booking(
+        student_id=1, tutor_id=1, service_type="Test",
+        appointment_time=appt, status=BookingStatus.CONFIRMED,
+    )
+    seeded_session.add(booking)
+    await seeded_session.commit()
+
+    # 50 min later — outside the 45-min window
+    safe_time = appt + timedelta(minutes=50)
+    await check_double_booking(
+        seeded_session, tutor_id=1, appointment_time=safe_time,
+        lesson_duration=45, buffer_time=0,
+    )
+    # No exception means pass
+
+
+@pytest.mark.asyncio
+async def test_double_booking_custom_duration_with_buffer(seeded_session):
+    """With 60-min lesson + 15-min buffer (total 75), a booking at +60 min should conflict."""
+    appt = _next_weekday(0)  # Monday 10:00
+
+    booking = Booking(
+        student_id=1, tutor_id=1, service_type="Test",
+        appointment_time=appt, status=BookingStatus.CONFIRMED,
+    )
+    seeded_session.add(booking)
+    await seeded_session.commit()
+
+    # 60 min later — within the 75-min window (60 + 15 buffer)
+    conflict_time = appt + timedelta(minutes=60)
+    with pytest.raises(ValueError, match="конфликт"):
+        await check_double_booking(
+            seeded_session, tutor_id=1, appointment_time=conflict_time,
+            lesson_duration=60, buffer_time=15,
+        )

@@ -70,6 +70,11 @@ class BookingCreate(BaseModel):
         description="Student's Telegram @username (optional)",
         examples=["johndoe"],
     )
+    telegram_id: int | None = Field(
+        default=None,
+        description="Student's Telegram user ID (optional)",
+        examples=[123456789],
+    )
 
     @field_validator("phone")
     @classmethod
@@ -171,6 +176,14 @@ async def notify_tutor_new_booking(
         f"🕒 {appt}"
     )
 
+    if booking.student and booking.student.telegram_id is None:
+        bot_info = await bot.get_me()
+        text += (
+            f"\n\n⚠️ <b>Ученик не подключен к боту</b>\n"
+            f"Отправьте ему ссылку на бота, чтобы он получал напоминания: "
+            f"t.me/{bot_info.username}"
+        )
+
     try:
         await bot.send_message(chat_id=tutor.tg_id, text=text, parse_mode="HTML")
         logger.info(
@@ -229,6 +242,7 @@ async def create_booking(
             appointment_time=payload.appointment_time,
             tutor_id=payload.tutor_id,
             telegram_username=payload.telegram_username,
+            telegram_id=payload.telegram_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -244,3 +258,4 @@ async def create_booking(
         )
 
     return BookingRead(id=booking.id, status="success")
+
