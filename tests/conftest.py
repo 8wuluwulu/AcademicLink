@@ -83,6 +83,19 @@ async def seeded_session(session: AsyncSession):
     session.add(tutor)
     await session.flush()
 
+    from app.db.models import Service
+    default_service = Service(
+        id=1,
+        tutor_id=tutor.id,
+        name="Test Service",
+        duration=60,
+        buffer_time=0,
+        price=1000,
+        is_active=True
+    )
+    session.add(default_service)
+    await session.flush()
+
     student = Student(
         full_name="Test Student",
         phone="+998901234567",

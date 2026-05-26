@@ -40,7 +40,7 @@ async def test_booking_rejected_during_absence(seeded_session):
             seeded_session,
             full_name="Test Student",
             phone="+79001112233",
-            service_type="Math",
+            service_id=1,
             appointment_time=appt,
             tutor_id=tutor.id
         )

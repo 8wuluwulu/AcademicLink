@@ -16,7 +16,7 @@ from app.db.models import Tutor
 logger = logging.getLogger(__name__)
 
 
-async def ensure_tutor_exists(session: AsyncSession) -> Tutor:
+async def ensure_tutor_exists(session: AsyncSession) -> Tutor | None:
     """
     Guarantee that the database contains at least one tutor.
 
@@ -26,14 +26,8 @@ async def ensure_tutor_exists(session: AsyncSession) -> Tutor:
 
     Returns
     -------
-    Tutor
-        The existing or newly created tutor record.
-
-    Raises
-    ------
-    RuntimeError
-        If ``DEFAULT_TUTOR_TG_ID`` is not configured and no tutor
-        exists yet.
+    Tutor | None
+        The existing or newly created tutor record, or None if settings.default_tutor_tg_id is missing.
     """
     # Check whether *any* tutor row exists
     count_stmt = select(func.count()).select_from(Tutor)
@@ -61,10 +55,11 @@ async def ensure_tutor_exists(session: AsyncSession) -> Tutor:
 
     # ── No tutors — seed a default one ───────────────────────────────
     if settings.default_tutor_tg_id is None:
-        raise RuntimeError(
-            "No tutors in the database and DEFAULT_TUTOR_TG_ID is not set. "
-            "Add DEFAULT_TUTOR_TG_ID to your .env file."
+        logger.warning(
+            "⚠️ No tutors in the database and DEFAULT_TUTOR_TG_ID is not set in .env. "
+            "Skipping default tutor seeding. Expecting dynamic tutor registration."
         )
+        return None
 
     tutor = Tutor(
         tg_id=settings.default_tutor_tg_id,
@@ -75,10 +70,21 @@ async def ensure_tutor_exists(session: AsyncSession) -> Tutor:
     await session.flush()  # Get tutor.id
 
     # ── Seed default availability slots (Mon-Fri, 09:00-18:00) ──────
-    from app.db.models import AvailabilitySlot
+    from app.db.models import AvailabilitySlot, Service
     from datetime import time
 
-    logger.info("Seeding default availability slots (Mon-Fri, 09:00-18:00)...")
+    logger.info("Seeding default service and availability slots...")
+    
+    # Add default service
+    default_service = Service(
+        tutor_id=tutor.id,
+        name="Занятие по математике",
+        duration=60,
+        buffer_time=15,
+        price=1500
+    )
+    session.add(default_service)
+
     for day in range(5):  # 0 = Monday, 4 = Friday
         slot = AvailabilitySlot(
             tutor_id=tutor.id,

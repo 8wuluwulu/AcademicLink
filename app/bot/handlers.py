@@ -49,26 +49,12 @@ from app.bot.formatting import (
 )
 
 from app.db.database import async_session_factory
-from app.db.models import AvailabilitySlot, Booking, BookingStatus, Student, Tutor, TutorAbsence
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, Tutor, TutorAbsence
 
 logger = logging.getLogger(__name__)
 router = Router(name="main_router")
 
 
-# ── Easter Egg ───────────────────────────────────────────────────────
-
-@router.message(F.text.lower() == "ебать ты майонез")
-async def easter_egg_handler(message: Message):
-    """
-    Easter egg handler: responds with a photo to a specific secret phrase.
-    """
-    photo_url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSCB3vfbJRbyygmRv2L_sU6SQ6JOU3DjDU1vQ&s"  # Замени на URL или путь к файлу
-    try:
-        await message.answer_photo(
-            photo=photo_url,
-        )
-    except Exception as exc:
-        logger.error("Failed to send easter egg photo: %s", exc)
 
 
 # ── FSM States ───────────────────────────────────────────────────────
@@ -103,6 +89,17 @@ class RescheduleStates(StatesGroup):
 class ManualBookingStates(StatesGroup):
     waiting_datetime = State()
     waiting_service_type = State()
+
+
+class TutorSettingsStates(StatesGroup):
+    waiting_meeting_link = State()
+
+
+class ServiceManagement(StatesGroup):
+    waiting_name = State()
+    waiting_duration = State()
+    waiting_buffer = State()
+    waiting_price = State()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -201,8 +198,9 @@ async def _send_dashboard(message: Message) -> None:
                 f"📅 Подтверждено на сегодня: <b>{today_confirmed}</b>\n"
                 f"🟡 Новые заявки: <b>{pending_count}</b>\n"
                 f"👥 Всего учеников: <b>{total_students}</b>\n\n"
-                "<i>Выберите действие из меню ниже</i>"
+                                "<i>Выберите действие из меню ниже:</i>"
             )
+            
             await message.answer(text, parse_mode="HTML", reply_markup=MAIN_MENU)
             return
 
@@ -227,20 +225,68 @@ async def _send_dashboard(message: Message) -> None:
                 )
                 return
 
-        # ── 3. Fallback for Unknown Users ────────────────────────────
-        await message.answer(
-            f"Привет, <b>{name}</b>!\n\n"
-            f"Ваш Telegram ID: <code>{tg_id}</code>\n"
-            f"Ваш Username: <code>@{username if username else 'не установлен'}</code>\n\n"
-            "Если вы репетитор: добавьте этот ID в настройки.\n"
-            "Если вы ученик: убедитесь, что вы указали свой верный username при записи на сайте.",
-            parse_mode="HTML"
+        # ── 3. Onboarding: Automatically register as Tutor ───────────
+        from datetime import time
+        from app.core.config import settings
+
+        # Create Tutor
+        tutor = Tutor(
+            tg_id=tg_id,
+            name=name,
+            is_active=True,
+            lesson_duration=60,
+            buffer_time=15,
         )
+        session.add(tutor)
+        await session.flush()  # gets tutor.id
+
+        # Create default Service
+        default_service = Service(
+            tutor_id=tutor.id,
+            name="Консультация",
+            duration=60,
+            buffer_time=15,
+            price=1500,
+        )
+        session.add(default_service)
+
+        # Create default availability slots (Mon-Fri 09:00 - 18:00)
+        for day in range(5):  # 0 = Monday, 4 = Friday
+            slot = AvailabilitySlot(
+                tutor_id=tutor.id,
+                day_of_week=day,
+                start_time=time(9, 0),
+                end_time=time(18, 0),
+            )
+            session.add(slot)
+
+        await session.commit()
+
+        # Beautiful greeting message with personal link and button
+        text = (
+            f"🎉 <b>Добро пожаловать в AcademicLink, {name}!</b>\n\n"
+            f"Я автоматически зарегистрировал вас как репетитора и создал стартовую услугу «Консультация».\n\n"
+            f"🔗 <b>Ваша персональная ссылка для записи учеников:</b>\n"
+            f"{settings.web_url}/book/{tutor.id}\n\n"
+            f"⚙️ <b>Настройки:</b>\n"
+            f"Вы можете настроить свои услуги, время работы и календарь с помощью меню.\n"
+            f"Давайте подключим Google Календарь для синхронизации!"
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Подключить Google Календарь", url=f"{settings.web_url}/auth/google/login/{tutor.id}")]
+        ])
+        
+        await message.answer(text, parse_mode="HTML", reply_markup=MAIN_MENU)
+        await message.answer("Рекомендуем сразу настроить интеграцию:", reply_markup=kb)
+        return
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
+    if message.text and "gcal_success" in message.text:
+        await message.answer("🎉 <b>Google Календарь успешно подключен!</b>\n\nТеперь все новые записи будут автоматически появляться в вашем календаре, а занятые слоты будут блокироваться на лендинге.", parse_mode="HTML")
     await _send_dashboard(message)
 
 
@@ -618,51 +664,60 @@ async def _show_student_card(message: Message, phone: str) -> None:
 
 def _settings_text(tutor: Tutor, slots: list[AvailabilitySlot]) -> str:
     icon = "🟢" if tutor.is_active else "🔴"
-    status = "Активен — записи принимаются" if tutor.is_active else "Неактивен — записи заблокированы"
+    status = "Активен" if tutor.is_active else "Неактивен"
 
     days_map = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
-
-    # Group slots by weekday
     by_day: dict[int, list[AvailabilitySlot]] = {}
     for s in slots:
         by_day.setdefault(s.weekday, []).append(s)
 
-    if not by_day:
-        schedule_lines = "<i>Нет настроенных слотов. Запись заблокирована.</i>"
-    else:
-        lines = []
-        for day in sorted(by_day):
-            day_slots = by_day[day]
-            windows = ", ".join(
-                f"{s.start_time:%H:%M}–{s.end_time:%H:%M}" for s in day_slots
-            )
-            lines.append(f"  {days_map[day]}: {windows}")
-        schedule_lines = "\n".join(lines)
+    schedule_lines = []
+    for day in sorted(by_day):
+        windows = ", ".join(f"{s.start_time:%H:%M}–{s.end_time:%H:%M}" for s in by_day[day])
+        schedule_lines.append(f"  {days_map[day]}: {windows}")
+    
+    schedule_text = "\n".join(schedule_lines) if schedule_lines else "<i>Слоты не настроены</i>"
 
+    link_text = f"🔗 <b>Zoom/Meet:</b> {tutor.meeting_link or '<i>не установлена</i>'}"
     remind_icon = "🔔" if tutor.wants_reminders else "🔕"
-    remind_text = "Включены" if tutor.wants_reminders else "Отключены"
+    gcal_status = "🟢 Подключен" if tutor.google_token_json else "🔴 Не подключен"
 
     return (
         f"⚙️ <b>Настройки</b>\n\n"
-        f"👤 <b>{tutor.name}</b>\n"
-        f"{icon} {status}\n\n"
+        f"👤 <b>{tutor.name}</b>  ·  {icon} {status}\n"
+        f"{link_text}\n"
+        f"📅 <b>Google Календарь:</b> {gcal_status}\n\n"
         f"⏰ <b>Рабочие часы:</b>\n"
-        f"{schedule_lines}\n\n"
-        f"📐 <b>Урок:</b> {tutor.lesson_duration} мин"
-        f"{f' + {tutor.buffer_time} мин перерыв' if tutor.buffer_time else ''}\n"
-        f"{remind_icon} <b>Напоминания:</b> {remind_text}\n\n"
-        f"<i>Сайт принимает записи только в этих интервалах,\n"
-        f"если там нет другого урока или «Отсутствия».</i>"
+        f"{schedule_text}\n\n"
+        f"{remind_icon} <b>Напоминания:</b> {'Вкл' if tutor.wants_reminders else 'Откл'}\n"
     )
 
 
 def _settings_kb(tutor: Tutor) -> InlineKeyboardMarkup:
-    toggle_text = "🔴 Приостановить приём" if tutor.is_active else "🟢 Возобновить приём"
-    remind_text = "🔕 Отключить напоминания" if tutor.wants_reminders else "🔔 Включить напоминания"
+    toggle_text = "🔴 Пауза" if tutor.is_active else "🟢 Старт"
+    remind_text = "🔕 Увед." if tutor.wants_reminders else "🔔 Увед."
+    
+    from app.core.config import settings
+    
+    gcal_btn = (
+        InlineKeyboardButton(text="📅 Отключить Google", callback_data="gcal_disconnect")
+        if tutor.google_token_json
+        else InlineKeyboardButton(text="📅 Подключить Google", url=f"{settings.web_url}/auth/google/login/{tutor.id}")
+    )
+    
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=toggle_text, callback_data=f"toggle:{tutor.id}")],
-        [InlineKeyboardButton(text=remind_text, callback_data=f"toggle_remind:{tutor.id}")],
-        [InlineKeyboardButton(text="⏰ Мои слоты", callback_data="manage_slots")],
+        [
+            InlineKeyboardButton(text=toggle_text, callback_data=f"toggle:{tutor.id}"),
+            InlineKeyboardButton(text=remind_text, callback_data=f"toggle_remind:{tutor.id}"),
+        ],
+        [
+            InlineKeyboardButton(text="💎 Мои услуги", callback_data="manage_services"),
+            InlineKeyboardButton(text="🔗 Ссылка Zoom", callback_data="set_meeting_link"),
+        ],
+        [
+            InlineKeyboardButton(text="⏰ Мои слоты", callback_data="manage_slots"),
+            gcal_btn
+        ],
     ])
 
 
@@ -1062,6 +1117,13 @@ async def cb_confirm(callback: CallbackQuery) -> None:
         booking.status = BookingStatus.CONFIRMED
         await session.commit()
 
+        # Sync to Google Calendar
+        from app.services.google_calendar_service import sync_booking_to_calendar
+        try:
+            await sync_booking_to_calendar(session, booking)
+        except Exception as exc:
+            logger.error("Failed to sync confirmed booking #%d to Google Calendar: %s", booking.id, exc)
+
         # Collect student info for notification
         if booking.student and booking.student.telegram_id:
             student_tg_id = booking.student.telegram_id
@@ -1179,6 +1241,13 @@ async def cb_cancel_confirm(callback: CallbackQuery) -> None:
 
         booking.status = BookingStatus.CANCELLED
         await session.commit()
+
+        # Delete Google Calendar event
+        from app.services.google_calendar_service import delete_calendar_event
+        try:
+            await delete_calendar_event(session, booking)
+        except Exception as exc:
+            logger.error("Failed to delete Google event for cancelled booking #%d: %s", booking.id, exc)
 
         tg_username = booking.student.telegram_username if booking.student else None
 
@@ -1324,6 +1393,33 @@ async def cb_toggle(callback: CallbackQuery) -> None:
     )
     await callback.answer(alert)
     logger.info("Tutor #%d toggled is_active=%s", tutor_id, tutor.is_active)
+
+
+# ── Google Calendar Disconnect ────────────────────────────────────────
+
+
+@router.callback_query(F.data == "gcal_disconnect")
+async def cb_gcal_disconnect(callback: CallbackQuery) -> None:
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(callback.from_user.id, session)
+        if tutor is None:
+            await callback.answer("Репетитор не найден.", show_alert=True)
+            return
+
+        tutor.google_token_json = None
+        await session.commit()
+
+        result = await session.execute(
+            select(AvailabilitySlot)
+            .where(AvailabilitySlot.tutor_id == tutor.id)
+            .order_by(AvailabilitySlot.weekday, AvailabilitySlot.start_time)
+        )
+        slots = result.scalars().all()
+
+    await callback.message.edit_text(
+        _settings_text(tutor, slots), parse_mode="HTML", reply_markup=_settings_kb(tutor),
+    )
+    await callback.answer("📅 Google Календарь отключен.")
 
 
 # ── Student Deletion (Archive) ───────────────────────────────────────
@@ -1731,6 +1827,181 @@ async def cb_toggle_remind(callback: CallbackQuery) -> None:
     logger.info("Tutor #%d toggled wants_reminders=%s", tutor_id, tutor.wants_reminders)
 
 
+@router.callback_query(F.data == "set_meeting_link")
+async def cb_set_meeting_link(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(TutorSettingsStates.waiting_meeting_link)
+    await callback.message.answer(
+        "🔗 <b>Ссылка на Zoom/Google Meet</b>\n\n"
+        "Отправьте постоянную ссылку на вашу конференцию.\n"
+        "Она будет автоматически отправляться ученикам в напоминаниях.",
+        parse_mode="HTML",
+        reply_markup=BACK_KB,
+    )
+    await callback.answer()
+
+
+@router.message(TutorSettingsStates.waiting_meeting_link)
+async def process_meeting_link(message: Message, state: FSMContext) -> None:
+    link = message.text.strip()
+    if not link.startswith(("http://", "https://")):
+        await message.answer("❌ Ссылка должна начинаться с http:// или https://")
+        return
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor:
+            tutor.meeting_link = link
+            await session.commit()
+            await message.answer(f"✅ Ссылка сохранена: <code>{link}</code>", parse_mode="HTML", reply_markup=MAIN_MENU)
+        else:
+            await message.answer("❌ Ошибка: Репетитор не найден.")
+
+    await state.clear()
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  💎 Service Management
+# ═════════════════════════════════════════════════════════════════════
+
+
+async def _show_service_manager(callback_or_message, tutor_id: int) -> None:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Service).where(Service.tutor_id == tutor_id, Service.is_active == True)
+        )
+        services = result.scalars().all()
+
+    lines = ["💎 <b>Мои услуги</b>\n"]
+    if not services:
+        lines.append("<i>Список услуг пуст. Добавьте первую услугу, чтобы открыть запись на сайте.</i>")
+    else:
+        for s in services:
+            price_text = f" — {s.price} руб." if s.price else ""
+            lines.append(f"• <b>{s.name}</b> ({s.duration} мин){price_text}\n  /del_service_{s.id}")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить услугу", callback_data="add_service_init")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_settings")],
+    ])
+
+    text = "\n".join(lines)
+    if isinstance(callback_or_message, CallbackQuery):
+        await callback_or_message.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await callback_or_message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "manage_services")
+async def cb_manage_services(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(callback.from_user.id, session)
+    await _show_service_manager(callback, tutor.id)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_service_init")
+async def cb_add_service_init(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ServiceManagement.waiting_name)
+    await callback.message.answer(
+        "📝 <b>Название услуги</b>\n\n"
+        "Например: <i>Подготовка к ЕГЭ</i> или <i>Бесплатный пробный урок</i>",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+    await callback.answer()
+
+
+@router.message(ServiceManagement.waiting_name)
+async def process_service_name(message: Message, state: FSMContext) -> None:
+    name = message.text.strip()
+    await state.update_data(srv_name=name)
+    await state.set_state(ServiceManagement.waiting_duration)
+    await message.answer(
+        f"✅ Название: <b>{name}</b>\n\n"
+        "📐 <b>Длительность урока (мин)</b>\n"
+        "Например: 60",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+
+
+@router.message(ServiceManagement.waiting_duration)
+async def process_service_duration(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("❌ Введите число.")
+        return
+    
+    duration = int(message.text)
+    await state.update_data(srv_duration=duration)
+    await state.set_state(ServiceManagement.waiting_buffer)
+    await message.answer(
+        f"✅ Длительность: <b>{duration} мин.</b>\n\n"
+        "⏳ <b>Перерыв после урока (мин)</b>\n"
+        "Например: 15 (если не нужен — 0)",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+
+
+@router.message(ServiceManagement.waiting_buffer)
+async def process_service_buffer(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("❌ Введите число.")
+        return
+    
+    buffer = int(message.text)
+    await state.update_data(srv_buffer=buffer)
+    await state.set_state(ServiceManagement.waiting_price)
+    await message.answer(
+        f"✅ Перерыв: <b>{buffer} мин.</b>\n\n"
+        "💰 <b>Стоимость (руб)</b>\n"
+        "Например: 2000 (если бесплатно — 0)",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+
+
+@router.message(ServiceManagement.waiting_price)
+async def process_service_price(message: Message, state: FSMContext) -> None:
+    if not message.text.isdigit():
+        await message.answer("❌ Введите число.")
+        return
+    
+    price = int(message.text)
+    data = await state.get_data()
+    
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        service = Service(
+            tutor_id=tutor.id,
+            name=data['srv_name'],
+            duration=data['srv_duration'],
+            buffer_time=data['srv_buffer'],
+            price=price if price > 0 else None
+        )
+        session.add(service)
+        await session.commit()
+    
+    await state.clear()
+    await message.answer("✅ Услуга успешно добавлена!", reply_markup=MAIN_MENU)
+    await _show_service_manager(message, tutor.id)
+
+
+@router.message(F.text.startswith("/del_service_"))
+async def cmd_del_service(message: Message) -> None:
+    srv_id = int(message.text.split("_")[-1])
+    async with async_session_factory() as session:
+        service = await session.get(Service, srv_id)
+        if service:
+            tutor = await _get_tutor(message.from_user.id, session)
+            if service.tutor_id == tutor.id:
+                service.is_active = False # Soft delete
+                await session.commit()
+                await message.answer(f"🗑 Услуга «{service.name}» удалена.")
+                await _show_service_manager(message, tutor.id)
+
+
 # ═════════════════════════════════════════════════════════════════════
 #  🗓 Перенос занятия (Reschedule)
 # ═════════════════════════════════════════════════════════════════════
@@ -1798,6 +2069,7 @@ async def process_reschedule_datetime(message: Message, state: FSMContext) -> No
         student_tg_id = None
         if booking.student and booking.student.telegram_id:
             student_tg_id = booking.student.telegram_id
+        service_name = booking.service_type
 
     await state.clear()
     await message.answer(
@@ -1815,6 +2087,7 @@ async def process_reschedule_datetime(message: Message, state: FSMContext) -> No
         if bot:
             text = (
                 f"🔄 <b>Ваше занятие перенесено</b>\n\n"
+                f"📚 {service_name}\n"
                 f"🕒 Было: {fmt_full(old_time)}\n"
                 f"🕒 Стало: <b>{fmt_full(dt_utc)}</b>\n\n"
                 f"<i>Если у вас есть вопросы, свяжитесь с репетитором.</i>"
@@ -1864,39 +2137,50 @@ async def cb_manual_book_init(callback: CallbackQuery, state: FSMContext) -> Non
 
 @router.message(ManualBookingStates.waiting_datetime)
 async def process_manual_book_datetime(message: Message, state: FSMContext) -> None:
-    """Parse date/time for manual booking, then ask for service type."""
+    """Parse date/time for manual booking, then ask for service selection."""
     try:
         dt = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M").replace(tzinfo=MSK)
         dt_utc = dt.astimezone(timezone.utc)
     except ValueError:
-        await message.answer(
-            "❌ Неверный формат. Используйте <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>",
-            parse_mode="HTML",
+        await message.answer("❌ Используйте формат: <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>", parse_mode="HTML")
+        return
+
+    data = await state.get_data()
+    tutor_id = data["manual_book_tutor_id"]
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Service).where(Service.tutor_id == tutor_id, Service.is_active == True)
         )
+        services = result.scalars().all()
+
+    if not services:
+        await message.answer("❌ У вас нет активных услуг. Сначала добавьте их в настройках.")
+        await state.clear()
         return
 
     await state.update_data(manual_book_time=dt_utc.isoformat())
     await state.set_state(ManualBookingStates.waiting_service_type)
+
+    buttons = []
+    for s in services:
+        buttons.append([InlineKeyboardButton(text=s.name, callback_data=f"manual_srv:{s.id}")])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
     await message.answer(
         f"✅ Дата: <b>{fmt_full(dt_utc)}</b>\n\n"
-        f"📚 Введите тип услуги (предмет)\n"
-        f"<i>Например: English Grammar, IELTS Preparation</i>",
+        f"📚 <b>Выберите услугу:</b>",
         parse_mode="HTML",
-        reply_markup=BACK_KB,
+        reply_markup=kb
     )
 
 
-@router.message(ManualBookingStates.waiting_service_type)
-async def process_manual_book_service(message: Message, state: FSMContext) -> None:
-    """Create the booking with the given service type."""
+@router.callback_query(ManualBookingStates.waiting_service_type, F.data.startswith("manual_srv:"))
+async def cb_manual_book_service(callback: CallbackQuery, state: FSMContext) -> None:
     from app.services.booking_service import create_booking_internal
 
-    service_type = message.text.strip()
-    if not service_type or service_type == "◀️ Назад":
-        await state.clear()
-        await _send_dashboard(message)
-        return
-
+    service_id = int(callback.data.split(":")[1])
     data = await state.get_data()
     student_id = data["manual_book_student_id"]
     tutor_id = data["manual_book_tutor_id"]
@@ -1908,30 +2192,27 @@ async def process_manual_book_service(message: Message, state: FSMContext) -> No
                 session,
                 student_id=student_id,
                 tutor_id=tutor_id,
-                service_type=service_type,
+                service_id=service_id,
                 appointment_time=appointment_time,
             )
         except ValueError as exc:
-            await message.answer(
-                f"❌ {exc}\n\n<i>Попробуйте другое время или нажмите «◀️ Назад».</i>",
-                parse_mode="HTML",
-            )
+            await callback.message.answer(f"❌ {exc}")
             return
 
         student_name = booking.student.full_name if booking.student else "—"
         student_tg_id = booking.student.telegram_id if booking.student else None
 
     await state.clear()
-    await message.answer(
+    await callback.message.edit_text(
         f"✅ <b>Занятие создано!</b>\n\n"
         f"👤 {student_name}\n"
         f"🕒 {fmt_full(appointment_time)}\n"
-        f"📚 {service_type}\n"
+        f"📚 {booking.service_type}\n"
         f"🟢 Подтверждено",
-        parse_mode="HTML",
-        reply_markup=MAIN_MENU,
+        parse_mode="HTML"
     )
-    logger.info("Manual booking created by tg_id=%d for student=%d", message.from_user.id, student_id)
+    await callback.message.answer("Главное меню", reply_markup=MAIN_MENU)
+    await callback.answer()
 
     # ── Notify student ────────────────────────────────────────────────
     if student_tg_id:
@@ -1941,7 +2222,7 @@ async def process_manual_book_service(message: Message, state: FSMContext) -> No
             text = (
                 f"🟢 <b>Репетитор записал вас на занятие</b>\n\n"
                 f"🕒 {fmt_full(appointment_time)}\n"
-                f"📚 {service_type}\n\n"
+                f"📚 {booking.service_type}\n\n"
                 f"<i>До встречи!</i>"
             )
             try:

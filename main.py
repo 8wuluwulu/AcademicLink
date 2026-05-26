@@ -145,6 +145,18 @@ from app.api.router import router as api_router  # noqa: E402
 app.include_router(api_router)
 
 
+# ── Static Files / Landing Page ──────────────────────────────────────
+from fastapi.responses import FileResponse
+
+
+@app.get("/book/{tutor_id}", tags=["Web UI"])
+async def serve_landing(tutor_id: int):
+    """Serves the personalized student landing page."""
+    return FileResponse("landing.html")
+
+
+
+
 # ── Health Check ─────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 async def health_check():

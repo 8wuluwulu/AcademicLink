@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # --- Telegram ---
     bot_token: Optional[str] = None
 
+    # --- Web & API ---
+    web_url: str = "http://localhost:8000"
+
+    # --- Google Calendar API ---
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+
     # --- Database ---
     database_url: str = (
         "postgresql+asyncpg://user:password@localhost:5432/academiclink"

@@ -8,11 +8,15 @@ to be included in the FastAPI application.
 from fastapi import APIRouter
 
 from app.api.booking import router as booking_router
+from app.api.tutor import router as tutor_router
+from app.api.auth import router as auth_router
 
 router = APIRouter(prefix="/api/v1")
 
 # ── Sub-routers ──────────────────────────────────────────────────────
 router.include_router(booking_router)
+router.include_router(tutor_router)
+router.include_router(auth_router)
 
 
 @router.get("/health", tags=["system"])

@@ -1,9 +1,7 @@
 """
 AcademicLink — Booking Service
 
-Core business logic for creating and managing bookings.
-All functions receive an ``AsyncSession`` so they can be called
-from both the FastAPI API layer and the Telegram bot layer.
+Core business logic for creating and managing bookings using Services.
 """
 
 import logging
@@ -13,13 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AvailabilitySlot, Booking, BookingStatus, Student, Tutor, TutorAbsence
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, Tutor, TutorAbsence
 
 logger = logging.getLogger(__name__)
 
 # ── Validation Helpers ───────────────────────────────────────────────
-
-DEFAULT_LESSON_DURATION = 60  # fallback if tutor has no custom setting
 
 
 async def check_tutor_absence(
@@ -28,15 +24,6 @@ async def check_tutor_absence(
     tutor_id: int,
     appointment_time: datetime,
 ) -> None:
-    """
-    Ensure the requested ``appointment_time`` does not overlap
-    with a :class:`TutorAbsence`.
-
-    Raises
-    ------
-    ValueError
-        If the tutor is on absence during the requested time.
-    """
     stmt = select(TutorAbsence).where(
         TutorAbsence.tutor_id == tutor_id,
         TutorAbsence.start_time <= appointment_time,
@@ -48,8 +35,7 @@ async def check_tutor_absence(
     if absence is not None:
         reason_text = f" ({absence.reason})" if absence.reason else ""
         raise ValueError(
-            f"Репетитор отсутствует в это время{reason_text}. "
-            f"Выберите другую дату."
+            f"Репетитор отсутствует в это время{reason_text}."
         )
 
 
@@ -59,27 +45,11 @@ async def check_availability(
     tutor_id: int,
     appointment_time: datetime,
 ) -> None:
-    """
-    Ensure the requested ``appointment_time`` falls within one of the
-    tutor's :class:`AvailabilitySlot` windows for that weekday.
-
-    The appointment time is converted to MSK (the tutor's local timezone)
-    before comparing against slot boundaries.
-
-    Raises
-    ------
-    ValueError
-        If the tutor has no slots for the day or the time is outside
-        all defined windows.
-    """
     from app.bot.formatting import MSK
-
-    # Use MSK for validation to match the tutor's local context
     local_time = appointment_time.astimezone(MSK)
     weekday = local_time.weekday()
     local_clock = local_time.time()
 
-    # Query AvailabilitySlot for this tutor + weekday
     stmt = select(AvailabilitySlot).where(
         AvailabilitySlot.tutor_id == tutor_id,
         AvailabilitySlot.weekday == weekday,
@@ -88,22 +58,13 @@ async def check_availability(
     slots = result.scalars().all()
 
     if not slots:
-        raise ValueError(
-            "Репетитор не принимает в этот день. Выберите другой день."
-        )
+        raise ValueError("Репетитор не принимает в этот день.")
 
-    # Check if time falls within ANY slot for that day
     for slot in slots:
         if slot.start_time <= local_clock < slot.end_time:
-            return  # valid
+            return
 
-    windows = ", ".join(
-        f"{s.start_time:%H:%M}–{s.end_time:%H:%M}" for s in slots
-    )
-    raise ValueError(
-        f"Репетитор не принимает в {local_clock:%H:%M}. "
-        f"Доступные окна: {windows}."
-    )
+    raise ValueError("Выбранное время вне рабочих часов репетитора.")
 
 
 async def check_double_booking(
@@ -111,54 +72,49 @@ async def check_double_booking(
     *,
     tutor_id: int,
     appointment_time: datetime,
-    lesson_duration: int = DEFAULT_LESSON_DURATION,
-    buffer_time: int = 0,
+    lesson_duration: int,
+    buffer_time: int,
     exclude_booking_id: int | None = None,
 ) -> None:
-    """
-    Ensure no CONFIRMED or PENDING booking exists for the same tutor
-    within a window calculated from the tutor's ``lesson_duration``
-    plus ``buffer_time``.
+    # 1. Fetch bookings within ±1 day around the appointment time to be fully safe
+    day_start = appointment_time.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    day_end = appointment_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=2)
 
-    Checking both statuses prevents the "race condition" where multiple
-    students could book the same slot while all bookings are still
-    PENDING.  This enforces first-come, first-served semantics.
-
-    Parameters
-    ----------
-    exclude_booking_id
-        If provided, skip this booking ID from the overlap check
-        (used by reschedule to avoid self-conflict).
-
-    Raises
-    ------
-    ValueError
-        If an overlapping active booking is found.
-    """
-    total_block = lesson_duration + buffer_time
-    window_start = appointment_time - timedelta(minutes=total_block)
-    window_end = appointment_time + timedelta(minutes=total_block)
-
-    stmt = select(Booking).where(
+    stmt = select(Booking, Service).join(Service, isouter=True).where(
         Booking.tutor_id == tutor_id,
         Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.PENDING]),
-        Booking.appointment_time >= window_start,
-        Booking.appointment_time < window_end,
+        Booking.appointment_time >= day_start,
+        Booking.appointment_time < day_end,
     )
     if exclude_booking_id is not None:
         stmt = stmt.where(Booking.id != exclude_booking_id)
+        
     result = await session.execute(stmt)
-    conflict = result.scalar_one_or_none()
+    existing_data = result.all()
 
-    if conflict is not None:
-        raise ValueError(
-            f"Временной конфликт: у репетитора уже есть занятие "
-            f"в {conflict.appointment_time:%d.%m.%Y %H:%M}. "
-            f"Выберите другое время (минимум {total_block} минут между занятиями)."
-        )
+    new_start = appointment_time
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    new_end = new_start + timedelta(minutes=lesson_duration + buffer_time)
+
+    for b, s in existing_data:
+        b_start = b.appointment_time
+        if b_start.tzinfo is None:
+            b_start = b_start.replace(tzinfo=timezone.utc)
+        b_dur = s.duration if s else 60
+        b_buf = s.buffer_time if s else 0
+        b_end = b_start + timedelta(minutes=b_dur + b_buf)
+
+        # Precise overlap check: start1 < end2 and end1 > start2
+        if new_start < b_end and new_end > b_start:
+            from app.bot.formatting import MSK
+            conflict_local = b_start.astimezone(MSK)
+            raise ValueError(
+                f"Временной конфликт: у репетитора уже есть занятие в {conflict_local:%H:%M}."
+            )
 
 
-# ── Main Service Function ───────────────────────────────────────────
+# ── Main Service Functions ───────────────────────────────────────────
 
 
 async def create_booking_from_web(
@@ -166,38 +122,21 @@ async def create_booking_from_web(
     *,
     full_name: str,
     phone: str,
-    service_type: str,
+    service_id: int,
     appointment_time: datetime,
-    tutor_id: int | None = None,
-    telegram_id: int | None = None,
+    tutor_id: int,
     telegram_username: str | None = None,
+    payment_method: str = "cash",
 ) -> Booking:
-    """
-    Create a new booking from a web-form submission.
-
-    Flow
-    ----
-    1. Look up an existing ``Student`` by *phone* (unique).
-       → If not found, create one.
-    2. Resolve the target ``Tutor``:
-       - If *tutor_id* is provided (multi-tenant), look up that specific tutor.
-       - Otherwise, pick the first active tutor (single-tutor MVP fallback).
-    3. **Availability check**: verify the time falls within a tutor's slot.
-    4. **Overlap check**: ensure no confirmed booking within ±60 min.
-    5. Create a ``Booking`` with ``PENDING`` status.
-    6. Commit and return the booking with relationships loaded.
-
-    Raises
-    ------
-    ValueError
-        If the requested tutor is not found, is inactive, no active
-        tutor exists, the slot is unavailable, or there is a time conflict.
-    """
-    # ── 0. Normalize appointment_time to UTC-aware ────────────────────
     if appointment_time.tzinfo is None:
         appointment_time = appointment_time.replace(tzinfo=timezone.utc)
 
-    # ── 1. Resolve student ───────────────────────────────────────────
+    # 1. Resolve Service
+    service = await session.get(Service, service_id)
+    if not service or service.tutor_id != tutor_id or not service.is_active:
+        raise ValueError("Выбранная услуга не доступна.")
+
+    # 2. Resolve Student
     stmt = select(Student).where(Student.phone == phone)
     result = await session.execute(stmt)
     student = result.scalar_one_or_none()
@@ -206,104 +145,168 @@ async def create_booking_from_web(
         student = Student(
             full_name=full_name,
             phone=phone,
-            telegram_id=telegram_id,
             telegram_username=telegram_username.lstrip("@") if telegram_username else None,
         )
         session.add(student)
-        await session.flush()  # populate student.id
-        logger.info("Created new student: %s (phone=%s)", full_name, phone)
+        await session.flush()
     else:
-        # Reactivate student if they were archived
         if not student.is_active:
             student.is_active = True
-            logger.info("Reactivated student id=%d (phone=%s)", student.id, phone)
+        student.full_name = full_name
 
-        # Update name / telegram fields if provided
-        if student.full_name != full_name:
-            student.full_name = full_name
-        if telegram_id is not None and student.telegram_id != telegram_id:
-            student.telegram_id = telegram_id
-        if telegram_username is not None:
-            clean_username = telegram_username.lstrip("@")
-            if student.telegram_username != clean_username:
-                student.telegram_username = clean_username
-        logger.info("Found existing student id=%d for phone=%s", student.id, phone)
+    # 3. Resolve Tutor
+    tutor = await session.get(Tutor, tutor_id)
+    if not tutor or not tutor.is_active:
+        raise ValueError("Репетитор не принимает записи.")
 
-    # ── 2. Resolve tutor ─────────────────────────────────────────────
-    if tutor_id is not None:
-        # Multi-tenant: look up the specific tutor
-        stmt = select(Tutor).where(Tutor.id == tutor_id)
-        result = await session.execute(stmt)
-        tutor = result.scalar_one_or_none()
-
-        if tutor is None:
-            raise ValueError(f"Tutor with id={tutor_id} not found.")
-        if not tutor.is_active:
-            raise ValueError(
-                f"Tutor '{tutor.name}' (id={tutor_id}) is not currently "
-                "accepting bookings."
-            )
-    else:
-        # Single-tutor MVP fallback: pick the first active tutor
-        stmt = select(Tutor).where(Tutor.is_active.is_(True)).limit(1)
-        result = await session.execute(stmt)
-        tutor = result.scalar_one_or_none()
-
-        if tutor is None:
-            raise ValueError(
-                "No active tutor found. "
-                "Run ensure_tutor_exists() during startup to seed a default tutor."
-            )
-
-    # ── 3. Availability check ────────────────────────────────────────
-    await check_availability(
-        session, tutor_id=tutor.id, appointment_time=appointment_time,
-    )
-
-    # ── 4. Absence check ─────────────────────────────────────────────
-    await check_tutor_absence(
-        session, tutor_id=tutor.id, appointment_time=appointment_time,
-    )
-
-    # ── 5. Double-booking / overlap check ────────────────────────────
+    # 4. Validations
+    await check_availability(session, tutor_id=tutor_id, appointment_time=appointment_time)
+    await check_tutor_absence(session, tutor_id=tutor_id, appointment_time=appointment_time)
     await check_double_booking(
         session,
-        tutor_id=tutor.id,
+        tutor_id=tutor_id,
         appointment_time=appointment_time,
-        lesson_duration=tutor.lesson_duration,
-        buffer_time=tutor.buffer_time,
+        lesson_duration=service.duration,
+        buffer_time=service.buffer_time,
     )
 
-    # ── 5. Create booking ────────────────────────────────────────────
+    # 5. Create Booking
     booking = Booking(
         student_id=student.id,
         tutor_id=tutor.id,
-        service_type=service_type,
+        service_id=service.id,
+        service_type=service.name,
+        student_name_snapshot=full_name,
         appointment_time=appointment_time,
         status=BookingStatus.PENDING,
         created_at=datetime.now(timezone.utc),
+        payment_method=payment_method,
     )
     session.add(booking)
     await session.commit()
 
-    # Re-fetch with relationships eagerly loaded so callers
-    # (e.g. notify_tutor_new_booking) can access booking.student / .tutor
     stmt = (
         select(Booking)
         .where(Booking.id == booking.id)
         .options(selectinload(Booking.student), selectinload(Booking.tutor))
     )
     result = await session.execute(stmt)
-    booking = result.scalar_one()
+    return result.scalar_one()
 
-    logger.info(
-        "Booking #%d created — student=%d tutor=%d service=%r",
-        booking.id,
-        booking.student_id,
-        booking.tutor_id,
-        booking.service_type,
+
+async def get_available_slots(
+    session: AsyncSession,
+    *,
+    tutor_id: int,
+    service_id: int,
+    date: datetime,
+) -> list[str]:
+    from app.bot.formatting import MSK
+    
+    tutor = await session.get(Tutor, tutor_id)
+    if not tutor or not tutor.is_active:
+        return []
+
+    service = await session.get(Service, service_id)
+    if not service or service.tutor_id != tutor_id:
+        return []
+
+    duration = service.duration
+    buffer = service.buffer_time
+    total_needed = duration + buffer
+
+    local_date = date.astimezone(MSK).replace(hour=0, minute=0, second=0, microsecond=0)
+    weekday = local_date.weekday()
+
+    stmt = select(AvailabilitySlot).where(
+        AvailabilitySlot.tutor_id == tutor_id,
+        AvailabilitySlot.weekday == weekday,
     )
-    return booking
+    res = await session.execute(stmt)
+    slots = res.scalars().all()
+    if not slots:
+        return []
+
+    day_start = local_date.astimezone(timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    
+    # Get bookings with their associated service durations
+    stmt = select(Booking, Service).join(Service, isouter=True).where(
+        Booking.tutor_id == tutor_id,
+        Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.PENDING]),
+        Booking.appointment_time >= day_start,
+        Booking.appointment_time < day_end,
+    )
+    res = await session.execute(stmt)
+    existing_data = res.all()
+
+    stmt = select(TutorAbsence).where(
+        TutorAbsence.tutor_id == tutor_id,
+        TutorAbsence.end_time >= day_start,
+        TutorAbsence.start_time < day_end,
+    )
+    res = await session.execute(stmt)
+    absences = res.scalars().all()
+
+    # Get busy slots from Google Calendar
+    from app.services.google_calendar_service import get_busy_slots_from_calendar
+    try:
+        busy_calendar_intervals = await get_busy_slots_from_calendar(
+            session, tutor_id=tutor_id, start_date=day_start, end_date=day_end
+        )
+    except Exception as exc:
+        logger.error("Failed to fetch busy slots from Google Calendar: %s", exc)
+        busy_calendar_intervals = []
+
+    available_times = []
+    for slot in slots:
+        current_time = local_date.replace(hour=slot.start_time.hour, minute=slot.start_time.minute)
+        end_time = local_date.replace(hour=slot.end_time.hour, minute=slot.end_time.minute)
+        
+        now_local = datetime.now(MSK)
+        if current_time < now_local:
+            minutes = (now_local.minute // 15 + 1) * 15
+            current_time = now_local.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
+            if current_time < local_date.replace(hour=slot.start_time.hour, minute=slot.start_time.minute):
+                current_time = local_date.replace(hour=slot.start_time.hour, minute=slot.start_time.minute)
+
+        while current_time + timedelta(minutes=duration) <= end_time:
+            candidate_start = current_time.astimezone(timezone.utc)
+            candidate_end = candidate_start + timedelta(minutes=total_needed)
+            
+            overlap = False
+            for b, s in existing_data:
+                # Skip sync events that correspond to the current booking if we exclude it
+                # (Not needed in get_available_slots, but good pattern)
+                b_start = b.appointment_time
+                b_dur = s.duration if s else 60
+                b_buf = s.buffer_time if s else 0
+                b_end = b_start + timedelta(minutes=b_dur + b_buf)
+                
+                if candidate_start < b_end and candidate_end > b_start:
+                    overlap = True
+                    break
+            
+            if not overlap:
+                for a in absences:
+                    if candidate_start < a.end_time and candidate_end > a.start_time:
+                        overlap = True
+                        break
+
+            if not overlap:
+                for c_start, c_end in busy_calendar_intervals:
+                    # Skip events that might be sync placeholders or mismatch
+                    # If this slot overlaps with any busy event on tutor's calendar, block it
+                    if candidate_start < c_end and candidate_end > c_start:
+                        overlap = True
+                        break
+            
+            if not overlap:
+                available_times.append(current_time.strftime("%H:%M"))
+            
+            current_time += timedelta(minutes=15)
+
+    return sorted(list(set(available_times)))
 
 
 async def reschedule_booking(
@@ -312,24 +315,9 @@ async def reschedule_booking(
     booking_id: int,
     new_appointment_time: datetime,
 ) -> tuple[Booking, datetime]:
-    """
-    Reschedule an existing booking to a new date/time.
-
-    Re-runs all validation checks (availability, absence, double-booking)
-    against the new time.  Returns the updated booking **and** the old
-    appointment time so the caller can build a notification message.
-
-    Raises
-    ------
-    ValueError
-        If the booking is not found, already processed, or the new
-        time fails any validation check.
-    """
-    # ── 0. Normalize to UTC ───────────────────────────────────────────
     if new_appointment_time.tzinfo is None:
         new_appointment_time = new_appointment_time.replace(tzinfo=timezone.utc)
 
-    # ── 1. Fetch booking ──────────────────────────────────────────────
     stmt = (
         select(Booking)
         .where(Booking.id == booking_id)
@@ -338,46 +326,38 @@ async def reschedule_booking(
     result = await session.execute(stmt)
     booking = result.scalar_one_or_none()
 
-    if booking is None:
+    if not booking:
         raise ValueError("Запись не найдена.")
-    if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
-        raise ValueError(
-            f"Нельзя перенести запись со статусом «{booking.status.value}»."
-        )
+    
+    # Fetch service manually if not loaded
+    service = await session.get(Service, booking.service_id) if booking.service_id else None
+    duration = service.duration if service else 60
+    buffer = service.buffer_time if service else 0
 
-    tutor = booking.tutor
-    if tutor is None:
-        raise ValueError("Репетитор не найден.")
-
-    # ── 2. Run validations against the NEW time ───────────────────────
-    await check_availability(
-        session, tutor_id=tutor.id, appointment_time=new_appointment_time,
-    )
-    await check_tutor_absence(
-        session, tutor_id=tutor.id, appointment_time=new_appointment_time,
-    )
+    await check_availability(session, tutor_id=booking.tutor_id, appointment_time=new_appointment_time)
+    await check_tutor_absence(session, tutor_id=booking.tutor_id, appointment_time=new_appointment_time)
     await check_double_booking(
         session,
-        tutor_id=tutor.id,
+        tutor_id=booking.tutor_id,
         appointment_time=new_appointment_time,
-        lesson_duration=tutor.lesson_duration,
-        buffer_time=tutor.buffer_time,
+        lesson_duration=duration,
+        buffer_time=buffer,
         exclude_booking_id=booking.id,
     )
 
-    # ── 3. Update booking ─────────────────────────────────────────────
     old_time = booking.appointment_time
     booking.appointment_time = new_appointment_time
     booking.status = BookingStatus.CONFIRMED
     await session.commit()
 
-    # Refresh with relationships
-    await session.refresh(booking, attribute_names=["student", "tutor"])
+    # Sync with Google Calendar if enabled
+    from app.services.google_calendar_service import sync_booking_to_calendar
+    try:
+        await sync_booking_to_calendar(session, booking)
+    except Exception as exc:
+        logger.error("Failed to sync rescheduled booking #%d to Google Calendar: %s", booking.id, exc)
 
-    logger.info(
-        "Booking #%d rescheduled from %s to %s",
-        booking.id, old_time, new_appointment_time,
-    )
+    await session.refresh(booking, attribute_names=["student", "tutor"])
     return booking, old_time
 
 
@@ -386,60 +366,31 @@ async def create_booking_internal(
     *,
     student_id: int,
     tutor_id: int,
-    service_type: str,
+    service_id: int,
     appointment_time: datetime,
 ) -> Booking:
-    """
-    Create a CONFIRMED booking initiated by the tutor (internal CRM entry).
-
-    Unlike :func:`create_booking_from_web`, this skips student
-    resolution (the student already exists) and creates the booking
-    as ``CONFIRMED`` immediately.
-
-    Raises
-    ------
-    ValueError
-        If the student/tutor is not found, is inactive, or the
-        time fails any validation check.
-    """
-    # ── 0. Normalize to UTC ───────────────────────────────────────────
     if appointment_time.tzinfo is None:
         appointment_time = appointment_time.replace(tzinfo=timezone.utc)
 
-    # ── 1. Resolve student ────────────────────────────────────────────
-    student = await session.get(Student, student_id)
-    if student is None:
-        raise ValueError("Ученик не найден.")
-    if not student.is_active:
-        raise ValueError(f"Ученик «{student.full_name}» архивирован.")
+    service = await session.get(Service, service_id)
+    if not service or service.tutor_id != tutor_id:
+        raise ValueError("Услуга не найдена.")
 
-    # ── 2. Resolve tutor ──────────────────────────────────────────────
-    tutor = await session.get(Tutor, tutor_id)
-    if tutor is None:
-        raise ValueError("Репетитор не найден.")
-    if not tutor.is_active:
-        raise ValueError("Репетитор не принимает записи.")
-
-    # ── 3. Validations ────────────────────────────────────────────────
-    await check_availability(
-        session, tutor_id=tutor.id, appointment_time=appointment_time,
-    )
-    await check_tutor_absence(
-        session, tutor_id=tutor.id, appointment_time=appointment_time,
-    )
+    await check_availability(session, tutor_id=tutor_id, appointment_time=appointment_time)
+    await check_tutor_absence(session, tutor_id=tutor_id, appointment_time=appointment_time)
     await check_double_booking(
         session,
-        tutor_id=tutor.id,
+        tutor_id=tutor_id,
         appointment_time=appointment_time,
-        lesson_duration=tutor.lesson_duration,
-        buffer_time=tutor.buffer_time,
+        lesson_duration=service.duration,
+        buffer_time=service.buffer_time,
     )
 
-    # ── 4. Create booking (CONFIRMED — tutor-initiated) ───────────────
     booking = Booking(
-        student_id=student.id,
-        tutor_id=tutor.id,
-        service_type=service_type,
+        student_id=student_id,
+        tutor_id=tutor_id,
+        service_id=service_id,
+        service_type=service.name,
         appointment_time=appointment_time,
         status=BookingStatus.CONFIRMED,
         created_at=datetime.now(timezone.utc),
@@ -447,17 +398,17 @@ async def create_booking_internal(
     session.add(booking)
     await session.commit()
 
-    # Re-fetch with relationships
+    # Sync with Google Calendar if enabled
+    from app.services.google_calendar_service import sync_booking_to_calendar
+    try:
+        await sync_booking_to_calendar(session, booking)
+    except Exception as exc:
+        logger.error("Failed to sync internal booking #%d to Google Calendar: %s", booking.id, exc)
+
     stmt = (
         select(Booking)
         .where(Booking.id == booking.id)
         .options(selectinload(Booking.student), selectinload(Booking.tutor))
     )
     result = await session.execute(stmt)
-    booking = result.scalar_one()
-
-    logger.info(
-        "Internal booking #%d created — student=%d tutor=%d service=%r",
-        booking.id, booking.student_id, booking.tutor_id, booking.service_type,
-    )
-    return booking
+    return result.scalar_one()

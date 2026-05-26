@@ -32,6 +32,28 @@ async_session_factory = async_sessionmaker(
 
 
 # ── Table Creation ───────────────────────────────────────────────────
+def _auto_migrate_columns(connection) -> None:
+    """Helper to inspect existing tables and add missing columns dynamically."""
+    from sqlalchemy import inspect, text
+    inspector = inspect(connection)
+    
+    # Check tutors columns
+    if 'tutors' in inspector.get_table_names():
+        tutors_cols = [c['name'] for c in inspector.get_columns('tutors')]
+        if 'google_token_json' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN google_token_json TEXT"))
+        if 'google_calendar_id' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN google_calendar_id VARCHAR(255) DEFAULT 'primary'"))
+            
+    # Check bookings columns
+    if 'bookings' in inspector.get_table_names():
+        bookings_cols = [c['name'] for c in inspector.get_columns('bookings')]
+        if 'payment_method' not in bookings_cols:
+            connection.execute(text("ALTER TABLE bookings ADD COLUMN payment_method VARCHAR(20) DEFAULT 'cash'"))
+        if 'google_event_id' not in bookings_cols:
+            connection.execute(text("ALTER TABLE bookings ADD COLUMN google_event_id VARCHAR(255)"))
+
+
 async def init_db() -> None:
     """
     Create all tables registered in SQLModel metadata.
@@ -45,6 +67,7 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(_auto_migrate_columns)
 
 
 # ── Dependency ───────────────────────────────────────────────────────

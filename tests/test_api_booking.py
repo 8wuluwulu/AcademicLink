@@ -70,6 +70,19 @@ async def seed_db(test_session_factory):
         session.add(tutor)
         await session.flush()
 
+        from app.db.models import Service
+        default_service = Service(
+            id=1,
+            tutor_id=tutor.id,
+            name="Test Service",
+            duration=60,
+            buffer_time=0,
+            price=1000,
+            is_active=True
+        )
+        session.add(default_service)
+        await session.flush()
+
         student = Student(
             full_name="Existing Student",
             phone="+998901234567",
@@ -113,64 +126,27 @@ def app_client(test_session_factory, seed_db):
     app.dependency_overrides.clear()
 
 
-# ── Valid API key (must match settings.secret_key) ───────────────────
-
-API_KEY = "change-me-to-a-random-64-char-string"  # from .env
-
-
 # ═════════════════════════════════════════════════════════════════════
 #  Tests
 # ═════════════════════════════════════════════════════════════════════
 
 
 def test_create_booking_success(app_client):
-    """Valid request with correct API key should return 201."""
+    """Valid request should return 201."""
     response = app_client.post(
         "/api/v1/bookings/",
         json={
             "full_name": "Integration Student",
             "phone": "+79001234567",
-            "service_type": "IELTS",
+            "service_id": 1,
             "appointment_time": _next_weekday(0),  # Monday
             "tutor_id": 1,
         },
-        headers={"X-API-Key": API_KEY},
     )
     assert response.status_code == 201
     data = response.json()
     assert data["status"] == "success"
     assert "id" in data
-
-
-def test_create_booking_missing_api_key(app_client):
-    """Request without X-API-Key header should return 422 (missing header)."""
-    response = app_client.post(
-        "/api/v1/bookings/",
-        json={
-            "full_name": "No Key Student",
-            "phone": "+79001234567",
-            "service_type": "Math",
-            "appointment_time": _next_weekday(0),
-            "tutor_id": 1,
-        },
-    )
-    assert response.status_code == 422
-
-
-def test_create_booking_invalid_api_key(app_client):
-    """Request with wrong API key should return 403."""
-    response = app_client.post(
-        "/api/v1/bookings/",
-        json={
-            "full_name": "Wrong Key Student",
-            "phone": "+79001234567",
-            "service_type": "Math",
-            "appointment_time": _next_weekday(0),
-            "tutor_id": 1,
-        },
-        headers={"X-API-Key": "wrong-key"},
-    )
-    assert response.status_code == 403
 
 
 def test_create_booking_invalid_phone(app_client):
@@ -180,11 +156,10 @@ def test_create_booking_invalid_phone(app_client):
         json={
             "full_name": "Bad Phone Student",
             "phone": "8901234567",  # Missing +
-            "service_type": "Math",
+            "service_id": 1,
             "appointment_time": _next_weekday(0),
             "tutor_id": 1,
         },
-        headers={"X-API-Key": API_KEY},
     )
     assert response.status_code == 422
 
@@ -196,11 +171,10 @@ def test_create_booking_invalid_phone_short(app_client):
         json={
             "full_name": "Short Phone",
             "phone": "+123",
-            "service_type": "Math",
+            "service_id": 1,
             "appointment_time": _next_weekday(0),
             "tutor_id": 1,
         },
-        headers={"X-API-Key": API_KEY},
     )
     assert response.status_code == 422
 
@@ -213,11 +187,10 @@ def test_phone_validation_accepts_valid_formats(app_client):
             json={
                 "full_name": "Valid Phone Student",
                 "phone": phone,
-                "service_type": "IELTS",
+                "service_id": 1,
                 "appointment_time": _next_weekday(0),
                 "tutor_id": 1,
             },
-            headers={"X-API-Key": API_KEY},
         )
         # Should be 201 or 400 (service error) — NOT 422
         assert response.status_code in (201, 400), (
@@ -233,12 +206,11 @@ def test_create_booking_with_telegram_id(app_client):
         json={
             "full_name": "TG Student",
             "phone": "+79001112233",
-            "service_type": "Math",
+            "service_id": 1,
             "appointment_time": _next_weekday(0),
             "tutor_id": 1,
             "telegram_id": tg_id,
         },
-        headers={"X-API-Key": API_KEY},
     )
     assert response.status_code == 201
     

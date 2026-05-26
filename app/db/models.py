@@ -105,15 +105,51 @@ class Tutor(SQLModel, table=True):
         default=True,
         description="Whether the tutor wants reminder notifications",
     )
+    meeting_link: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Permanent Zoom/Meet link for lessons",
+    )
+    google_token_json: str | None = Field(
+        default=None,
+        description="Google OAuth tokens (JSON string)",
+    )
+    google_calendar_id: str | None = Field(
+        default="primary",
+        max_length=255,
+        description="Google Calendar ID to sync bookings to",
+    )
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="tutor")
     availability_slots: list["AvailabilitySlot"] = Relationship(
         back_populates="tutor",
     )
+    services: list["Service"] = Relationship(back_populates="tutor")
 
     def __repr__(self) -> str:
         return f"<Tutor id={self.id} name={self.name!r} active={self.is_active}>"
+
+
+# ── Service ──────────────────────────────────────────────────────────
+class Service(SQLModel, table=True):
+    """A type of lesson offered by a tutor (e.g. 'IELTS Prep', 'Free Trial')."""
+
+    __tablename__ = "services"
+
+    id: int | None = Field(default=None, primary_key=True)
+    tutor_id: int = Field(foreign_key="tutors.id", index=True)
+    name: str = Field(max_length=100, description="Service name")
+    duration: int = Field(default=60, description="Duration in minutes")
+    buffer_time: int = Field(default=0, description="Buffer in minutes")
+    price: int | None = Field(default=None, description="Price (optional)")
+    is_active: bool = Field(default=True)
+
+    # ── Relationships ────────────────────────────────────────────────
+    tutor: Optional[Tutor] = Relationship(back_populates="services")
+
+    def __repr__(self) -> str:
+        return f"<Service {self.name!r} duration={self.duration}>"
 
 
 # ── AvailabilitySlot ─────────────────────────────────────────────────
@@ -191,12 +227,14 @@ class Booking(SQLModel, table=True):
     # ── Foreign Keys ─────────────────────────────────────────────────
     student_id: int = Field(foreign_key="students.id", index=True)
     tutor_id: int = Field(foreign_key="tutors.id", index=True)
+    service_id: int | None = Field(default=None, foreign_key="services.id", index=True)
 
     # ── Booking Details ──────────────────────────────────────────────
     service_type: str = Field(
         max_length=100,
-        description='Type of service, e.g. "IELTS Preparation"',
+        description='Type of service (snapshot of service name)',
     )
+    student_name_snapshot: str | None = Field(default=None, max_length=255)
     appointment_time: datetime = Field(
         sa_type=DateTime(timezone=True),
         description="Scheduled date/time for the session",
@@ -224,6 +262,16 @@ class Booking(SQLModel, table=True):
         default=None,
         sa_type=DateTime(timezone=True),
         description="When the 24h reminder was sent (NULL = not sent)",
+    )
+    payment_method: str = Field(
+        default="cash",
+        max_length=20,
+        description="Payment method: cash or transfer",
+    )
+    google_event_id: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Google Calendar event ID mapped to this booking",
     )
 
     # ── Relationships ────────────────────────────────────────────────

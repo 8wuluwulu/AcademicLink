@@ -19,14 +19,39 @@ async def fix_database():
         logger.info("Updating 'bookings' table...")
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminded_at TIMESTAMP WITH TIME ZONE;"))
         await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS followed_up_at TIMESTAMP WITH TIME ZONE;"))
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS service_id INTEGER;"))
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS student_name_snapshot VARCHAR(255);"))
+        await conn.execute(text("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminded_24h_at TIMESTAMP WITH TIME ZONE;"))
         
         # 2. Add columns to 'students' table
         logger.info("Updating 'students' table...")
         await conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS notes TEXT;"))
         await conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS prepaid_balance INTEGER DEFAULT 0;"))
         await conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+        await conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS wants_reminders BOOLEAN DEFAULT TRUE;"))
+        await conn.execute(text("ALTER TABLE students ALTER COLUMN full_name SET DATA TYPE VARCHAR(255);"))
+
+        # 3. Add columns to 'tutors' table
+        logger.info("Updating 'tutors' table...")
+        await conn.execute(text("ALTER TABLE tutors ADD COLUMN IF NOT EXISTS meeting_link VARCHAR(512);"))
+        await conn.execute(text("ALTER TABLE tutors ADD COLUMN IF NOT EXISTS wants_reminders BOOLEAN DEFAULT TRUE;"))
         
-        # 3. Create 'availability_slots' table if it doesn't exist
+        # 4. Create 'services' table
+        logger.info("Creating 'services' table...")
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS services (
+                id SERIAL PRIMARY KEY,
+                tutor_id INTEGER NOT NULL REFERENCES tutors(id),
+                name VARCHAR(100) NOT NULL,
+                duration INTEGER DEFAULT 60,
+                buffer_time INTEGER DEFAULT 0,
+                price INTEGER,
+                is_active BOOLEAN DEFAULT TRUE
+            );
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_services_tutor_id ON services (tutor_id);"))
+
+        # 5. Create 'availability_slots' table if it doesn't exist
         logger.info("Ensuring 'availability_slots' table exists...")
         # We can use SQLModel's create_all but it might fail if other things are out of sync.
         # Here we just run a raw SQL for the specific new table if needed.

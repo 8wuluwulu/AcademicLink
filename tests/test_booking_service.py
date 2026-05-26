@@ -80,7 +80,7 @@ async def test_availability_check_wrong_hour_too_early(seeded_session):
     Seeded: Monday 09:00–17:00 (MSK).  02:00 UTC → 05:00 MSK — outside.
     """
     appt = _next_weekday(0).replace(hour=2, minute=0)
-    with pytest.raises(ValueError, match="не принимает в"):
+    with pytest.raises(ValueError, match="вне рабочих часов"):
         await check_availability(
             seeded_session, tutor_id=1, appointment_time=appt,
         )
@@ -93,7 +93,7 @@ async def test_availability_check_wrong_hour_too_late(seeded_session):
     Seeded: Monday 09:00–17:00 (MSK).  23:00 UTC → 02:00+1 MSK — outside.
     """
     appt = _next_weekday(0).replace(hour=23, minute=0)
-    with pytest.raises(ValueError, match="не принимает в"):
+    with pytest.raises(ValueError, match="не принимает"):
         await check_availability(
             seeded_session, tutor_id=1, appointment_time=appt,
         )
@@ -110,6 +110,7 @@ async def test_double_booking_no_conflict(seeded_session):
     appt = _next_weekday(0)
     await check_double_booking(
         seeded_session, tutor_id=1, appointment_time=appt,
+        lesson_duration=60, buffer_time=0,
     )
     # No exception means pass
 
@@ -135,6 +136,7 @@ async def test_double_booking_with_confirmed_conflict(seeded_session):
     with pytest.raises(ValueError, match="конфликт"):
         await check_double_booking(
             seeded_session, tutor_id=1, appointment_time=conflict_time,
+            lesson_duration=60, buffer_time=0,
         )
 
 
@@ -163,6 +165,7 @@ async def test_double_booking_with_pending_conflict(seeded_session):
     with pytest.raises(ValueError, match="конфликт"):
         await check_double_booking(
             seeded_session, tutor_id=1, appointment_time=conflict_time,
+            lesson_duration=60, buffer_time=0,
         )
 
 
@@ -186,6 +189,7 @@ async def test_double_booking_outside_window(seeded_session):
     safe_time = appt + timedelta(minutes=90)
     await check_double_booking(
         seeded_session, tutor_id=1, appointment_time=safe_time,
+        lesson_duration=60, buffer_time=0,
     )
     # No exception means pass
 
@@ -204,7 +208,7 @@ async def test_create_booking_success(seeded_session):
         seeded_session,
         full_name="New Student",
         phone="+79001234567",
-        service_type="IELTS Preparation",
+        service_id=1,
         appointment_time=appt,
         tutor_id=1,
     )
@@ -224,7 +228,7 @@ async def test_create_booking_rejected_no_slot(seeded_session):
             seeded_session,
             full_name="New Student",
             phone="+79001234567",
-            service_type="Math",
+            service_id=1,
             appointment_time=appt,
             tutor_id=1,
         )
@@ -235,12 +239,12 @@ async def test_create_booking_rejected_invalid_time(seeded_session):
     """Booking at midnight should be rejected (outside slot window)."""
     appt = _next_weekday(0).replace(hour=0, minute=0)
 
-    with pytest.raises(ValueError, match="не принимает в"):
+    with pytest.raises(ValueError, match="вне рабочих часов"):
         await create_booking_from_web(
             seeded_session,
             full_name="New Student",
             phone="+79001234567",
-            service_type="Math",
+            service_id=1,
             appointment_time=appt,
             tutor_id=1,
         )
@@ -268,7 +272,7 @@ async def test_create_booking_rejected_overlap(seeded_session):
             seeded_session,
             full_name="Another Student",
             phone="+79009876543",
-            service_type="IELTS",
+            service_id=1,
             appointment_time=appt + timedelta(minutes=30),
             tutor_id=1,
         )
@@ -299,7 +303,7 @@ async def test_create_booking_rejected_pending_overlap(seeded_session):
             seeded_session,
             full_name="Another Student",
             phone="+79009876543",
-            service_type="IELTS",
+            service_id=1,
             appointment_time=appt + timedelta(minutes=30),
             tutor_id=1,
         )
@@ -313,10 +317,17 @@ async def test_create_booking_rejected_pending_overlap(seeded_session):
 @pytest.mark.asyncio
 async def test_double_booking_custom_short_duration(seeded_session):
     """With 45-min lesson, a booking at +50 min should NOT conflict."""
-    appt = _next_weekday(0)  # Monday 10:00
+    appt = _next_weekday(0).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    from app.db.models import Service
+    custom_service = Service(
+        id=2, tutor_id=1, name="Short Service", duration=45, buffer_time=0, is_active=True
+    )
+    seeded_session.add(custom_service)
+    await seeded_session.flush()
 
     booking = Booking(
-        student_id=1, tutor_id=1, service_type="Test",
+        student_id=1, tutor_id=1, service_id=2, service_type="Test",
         appointment_time=appt, status=BookingStatus.CONFIRMED,
     )
     seeded_session.add(booking)
@@ -334,10 +345,17 @@ async def test_double_booking_custom_short_duration(seeded_session):
 @pytest.mark.asyncio
 async def test_double_booking_custom_duration_with_buffer(seeded_session):
     """With 60-min lesson + 15-min buffer (total 75), a booking at +60 min should conflict."""
-    appt = _next_weekday(0)  # Monday 10:00
+    appt = _next_weekday(0).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    from app.db.models import Service
+    custom_service = Service(
+        id=3, tutor_id=1, name="Buffered Service", duration=60, buffer_time=15, is_active=True
+    )
+    seeded_session.add(custom_service)
+    await seeded_session.flush()
 
     booking = Booking(
-        student_id=1, tutor_id=1, service_type="Test",
+        student_id=1, tutor_id=1, service_id=3, service_type="Test",
         appointment_time=appt, status=BookingStatus.CONFIRMED,
     )
     seeded_session.add(booking)
