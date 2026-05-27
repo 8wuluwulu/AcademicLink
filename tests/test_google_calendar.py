@@ -46,6 +46,71 @@ async def test_sync_booking_no_google_token(seeded_session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_sync_booking_pending_no_event(seeded_session: AsyncSession):
+    """If booking status is PENDING and there is no google_event_id, it should exit silently without requests."""
+    tutor = await seeded_session.get(Tutor, 1)
+    tutor.google_token_json = json.dumps({
+        "access_token": "mock_access_token",
+        "refresh_token": "mock_refresh_token"
+    })
+    await seeded_session.commit()
+
+    booking = Booking(
+        id=999,
+        tutor_id=1,
+        student_id=1,
+        service_id=1,
+        service_type="Индивидуальный урок",
+        appointment_time=datetime.now(timezone.utc),
+        status=BookingStatus.PENDING,
+        google_event_id=None,
+    )
+
+    with patch("httpx.AsyncClient.request") as mock_request:
+        await sync_booking_to_calendar(seeded_session, booking)
+        mock_request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_booking_non_confirmed_with_event_deletes(seeded_session: AsyncSession):
+    """If booking status is CANCELLED but google_event_id is set, it should delete the event."""
+    tutor = await seeded_session.get(Tutor, 1)
+    tutor.google_token_json = json.dumps({
+        "access_token": "mock_access_token",
+        "refresh_token": "mock_refresh_token"
+    })
+    await seeded_session.commit()
+
+    booking = Booking(
+        id=999,
+        tutor_id=1,
+        student_id=1,
+        service_id=1,
+        service_type="Индивидуальный урок",
+        appointment_time=datetime.now(timezone.utc),
+        status=BookingStatus.CANCELLED,
+        google_event_id="google_event_12345",
+    )
+    seeded_session.add(booking)
+    await seeded_session.flush()
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+
+    with patch("httpx.AsyncClient.request", return_value=mock_response) as mock_request:
+        await sync_booking_to_calendar(seeded_session, booking)
+        
+        # Verify a DELETE request was made
+        mock_request.assert_called_once()
+        method, url = mock_request.call_args[0]
+        assert method == "DELETE"
+        assert "events/google_event_12345" in url
+        
+        # Verify the event ID was cleared in DB
+        assert booking.google_event_id is None
+
+
+@pytest.mark.asyncio
 async def test_sync_booking_new_event(seeded_session: AsyncSession):
     """If no google_event_id is set, a POST request should create the event and save its ID."""
     tutor = await seeded_session.get(Tutor, 1)

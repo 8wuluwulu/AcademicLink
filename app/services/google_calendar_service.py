@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -141,11 +142,28 @@ async def sync_booking_to_calendar(session: AsyncSession, booking: Booking) -> N
     Synchronise a booking to the tutor's Google Calendar.
     Inserts a new event or updates an existing one if google_event_id is present.
     """
-    tutor = booking.tutor or await session.get(Tutor, booking.tutor_id)
+    # Safe refresh to ensure booking columns are fully loaded and not expired (only if persistent)
+    if inspect(booking).persistent:
+        await session.refresh(booking)
+
+    tutor = await session.get(Tutor, booking.tutor_id)
     if not tutor or not tutor.google_token_json:
         return  # Integration is not set up
 
-    student = booking.student or await session.get(Student, booking.student_id)
+    # Only sync CONFIRMED bookings. If the booking is not confirmed,
+    # but we previously synced it (has google_event_id), delete the event.
+    if booking.status != BookingStatus.CONFIRMED:
+        if booking.google_event_id:
+            logger.info(
+                "Booking #%d status is %s. Deleting calendar event %s.",
+                booking.id,
+                booking.status.value,
+                booking.google_event_id,
+            )
+            await delete_calendar_event(session, booking)
+        return
+
+    student = await session.get(Student, booking.student_id)
     student_name = booking.student_name_snapshot or (student.full_name if student else "Неизвестно")
     student_phone = student.phone if student else "—"
     pay_method = "💵 Наличные" if booking.payment_method == "cash" else "💳 Перевод на карту"
@@ -214,10 +232,14 @@ async def delete_calendar_event(session: AsyncSession, booking: Booking) -> None
     """
     Delete the Google Calendar event mapped to a booking (e.g. if the booking is cancelled).
     """
+    # Safe refresh to ensure booking columns are fully loaded and not expired (only if persistent)
+    if inspect(booking).persistent:
+        await session.refresh(booking)
+
     if not booking.google_event_id:
         return
 
-    tutor = booking.tutor or await session.get(Tutor, booking.tutor_id)
+    tutor = await session.get(Tutor, booking.tutor_id)
     if not tutor or not tutor.google_token_json:
         return
 

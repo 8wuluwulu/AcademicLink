@@ -67,10 +67,19 @@ async def lifespan(application: FastAPI):
         # Import Aiogram only when we actually have a token
         from aiogram import Bot, Dispatcher
         from app.bot.handlers import router as bot_router
-        from app.core.bot import set_bot
+        from app.core.bot import set_bot, set_bot_username
 
         bot = Bot(token=settings.bot_token)
         set_bot(bot)  # Make bot accessible via get_bot() helper
+        
+        # Cache the bot username for synchronous settings text building
+        try:
+            bot_info = await bot.get_me()
+            set_bot_username(bot_info.username)
+            logger.info("Cached bot username: @%s", bot_info.username)
+        except Exception as exc:
+            logger.error("Failed to fetch bot username during startup: %s", exc)
+
         application.state.bot = bot  # Also store on app.state for request access
         dp = Dispatcher()
         try:

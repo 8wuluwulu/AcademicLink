@@ -16,12 +16,24 @@ from typing import Optional
 from aiogram import Bot
 
 _bot: Optional[Bot] = None
+_bot_username: Optional[str] = None
 
 
 def set_bot(bot: Bot) -> None:
     """Store the active bot instance (called once at startup)."""
     global _bot
     _bot = bot
+
+
+def set_bot_username(username: str) -> None:
+    """Cache the bot's username (called once at startup)."""
+    global _bot_username
+    _bot_username = username
+
+
+def get_bot_username() -> str:
+    """Return the cached bot username, or 'bot' as fallback."""
+    return _bot_username or "bot"
 
 
 def get_bot() -> Optional[Bot]:

@@ -38,11 +38,11 @@ class BookingCreate(BaseModel):
         description="Student's full name",
         examples=["John Doe"],
     )
-    phone: str = Field(
-        ...,
+    phone: str | None = Field(
+        default=None,
         min_length=7,
         max_length=20,
-        description="Contact phone number",
+        description="Contact phone number (optional)",
         examples=["+998901234567"],
     )
     service_id: int = Field(
@@ -76,7 +76,9 @@ class BookingCreate(BaseModel):
 
     @field_validator("phone")
     @classmethod
-    def validate_phone(cls, v: str) -> str:
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         cleaned = v.strip()
         if not _PHONE_RE.match(cleaned):
             raise ValueError(

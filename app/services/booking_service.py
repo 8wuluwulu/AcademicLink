@@ -121,7 +121,7 @@ async def create_booking_from_web(
     session: AsyncSession,
     *,
     full_name: str,
-    phone: str,
+    phone: str | None = None,
     service_id: int,
     appointment_time: datetime,
     tutor_id: int,
@@ -137,11 +137,24 @@ async def create_booking_from_web(
         raise ValueError("Выбранная услуга не доступна.")
 
     # 2. Resolve Student
-    stmt = select(Student).where(Student.phone == phone)
-    result = await session.execute(stmt)
-    student = result.scalar_one_or_none()
+    student = None
+    if telegram_username:
+        clean_username = telegram_username.lstrip("@")
+        stmt = select(Student).where(Student.telegram_username == clean_username)
+        result = await session.execute(stmt)
+        student = result.scalar_one_or_none()
+
+    if student is None and phone:
+        stmt = select(Student).where(Student.phone == phone)
+        result = await session.execute(stmt)
+        student = result.scalar_one_or_none()
 
     if student is None:
+        # Generate a unique pseudo-phone number if not provided
+        if not phone:
+            uname_part = telegram_username.lstrip("@") if telegram_username else "unknown"
+            phone = f"+999{abs(hash(uname_part)) % 1000000000:09d}"
+
         student = Student(
             full_name=full_name,
             phone=phone,
@@ -153,6 +166,8 @@ async def create_booking_from_web(
         if not student.is_active:
             student.is_active = True
         student.full_name = full_name
+        if telegram_username:
+            student.telegram_username = telegram_username.lstrip("@")
 
     # 3. Resolve Tutor
     tutor = await session.get(Tutor, tutor_id)

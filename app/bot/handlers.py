@@ -102,6 +102,11 @@ class ServiceManagement(StatesGroup):
     waiting_price = State()
 
 
+class StudentRegistrationStates(StatesGroup):
+    waiting_full_name = State()
+    waiting_phone = State()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
@@ -204,6 +209,43 @@ async def _send_dashboard(message: Message) -> None:
             await message.answer(text, parse_mode="HTML", reply_markup=MAIN_MENU)
             return
 
+        # ── 1.5. Handle Already Linked Student ───────────────────────
+        student_stmt = select(Student).where(Student.telegram_id == tg_id)
+        student_res = await session.execute(student_stmt)
+        linked_student = student_res.scalar_one_or_none()
+        if linked_student:
+            # Fetch tutor ID for WebApp booking button
+            booking_stmt = select(Booking.tutor_id).where(Booking.student_id == linked_student.id).limit(1)
+            booking_res = await session.execute(booking_stmt)
+            tutor_id = booking_res.scalar_one_or_none()
+            if tutor_id is None:
+                tutor_res = await session.execute(select(Tutor.id).limit(1))
+                tutor_id = tutor_res.scalar_one_or_none()
+
+            kb = None
+            if tutor_id:
+                from aiogram.types import WebAppInfo
+                from app.core.config import settings
+                web_app_url = f"{settings.web_url}/book/{tutor_id}"
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📅 Записаться на занятие",
+                            web_app=WebAppInfo(url=web_app_url)
+                        )
+                    ]
+                ])
+
+            await message.answer(
+                f"👋 Рады видеть вас снова, <b>{linked_student.full_name}</b>!\n\n"
+                f"Вы вошли как ученик в системе <b>AcademicLink</b>. "
+                f"Здесь вы будете получать напоминания о ваших занятиях.\n\n"
+                f"Вы можете записаться на новое занятие прямо через кнопку ниже!",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+            return
+
         # ── 2. Handle Student Automatic Linking ──────────────────────
         if username:
             stmt = select(Student).where(
@@ -216,12 +258,37 @@ async def _send_dashboard(message: Message) -> None:
             if student:
                 student.telegram_id = tg_id
                 await session.commit()
+
+                # Fetch tutor ID for WebApp booking button
+                booking_stmt = select(Booking.tutor_id).where(Booking.student_id == student.id).limit(1)
+                booking_res = await session.execute(booking_stmt)
+                tutor_id = booking_res.scalar_one_or_none()
+                if tutor_id is None:
+                    tutor_res = await session.execute(select(Tutor.id).limit(1))
+                    tutor_id = tutor_res.scalar_one_or_none()
+
+                kb = None
+                if tutor_id:
+                    from aiogram.types import WebAppInfo
+                    from app.core.config import settings
+                    web_app_url = f"{settings.web_url}/book/{tutor_id}"
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="📅 Записаться на занятие",
+                                web_app=WebAppInfo(url=web_app_url)
+                            )
+                        ]
+                    ])
+
                 await message.answer(
                     f"👋 Привет, <b>{student.full_name}</b>!\n\n"
                     f"Я — бот системы <b>AcademicLink</b>. Теперь вы будете получать "
                     f"уведомления и напоминания о ваших занятиях прямо здесь.\n\n"
-                    f"✅ Ваш профиль успешно привязан.",
-                    parse_mode="HTML"
+                    f"✅ Ваш профиль успешно привязан.\n"
+                    f"Вы можете записаться на занятие прямо через кнопку ниже!",
+                    parse_mode="HTML",
+                    reply_markup=kb
                 )
                 return
 
@@ -254,7 +321,7 @@ async def _send_dashboard(message: Message) -> None:
         for day in range(5):  # 0 = Monday, 4 = Friday
             slot = AvailabilitySlot(
                 tutor_id=tutor.id,
-                day_of_week=day,
+                weekday=day,
                 start_time=time(9, 0),
                 end_time=time(18, 0),
             )
@@ -262,20 +329,30 @@ async def _send_dashboard(message: Message) -> None:
 
         await session.commit()
 
+        from app.core.bot import get_bot_username
+        bot_username = get_bot_username()
+
         # Beautiful greeting message with personal link and button
         text = (
             f"🎉 <b>Добро пожаловать в AcademicLink, {name}!</b>\n\n"
             f"Я автоматически зарегистрировал вас как репетитора и создал стартовую услугу «Консультация».\n\n"
-            f"🔗 <b>Ваша персональная ссылка для записи учеников:</b>\n"
-            f"{settings.web_url}/book/{tutor.id}\n\n"
+            f"🌐 <b>Ваша ссылка для записи через сайт (в клик копируется):</b>\n"
+            f"<code>{settings.web_url}/book/{tutor.id}</code>\n\n"
+            f"🤖 <b>Ваша ссылка для записи через Telegram:</b>\n"
+            f"<code>https://t.me/{bot_username}?start=ref_{tutor.id}</code>\n\n"
             f"⚙️ <b>Настройки:</b>\n"
             f"Вы можете настроить свои услуги, время работы и календарь с помощью меню.\n"
             f"Давайте подключим Google Календарь для синхронизации!"
         )
         
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Подключить Google Календарь", url=f"{settings.web_url}/auth/google/login/{tutor.id}")]
-        ])
+        is_localhost = "localhost" in settings.web_url or "127.0.0.1" in settings.web_url
+        
+        gcal_onboarding_btn = (
+            InlineKeyboardButton(text="🔗 Подключить Google Календарь", callback_data="gcal_localhost_warning")
+            if is_localhost
+            else InlineKeyboardButton(text="🔗 Подключить Google Календарь", url=f"{settings.web_url}/api/v1/auth/google/login/{tutor.id}")
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[gcal_onboarding_btn]])
         
         await message.answer(text, parse_mode="HTML", reply_markup=MAIN_MENU)
         await message.answer("Рекомендуем сразу настроить интеграцию:", reply_markup=kb)
@@ -285,6 +362,18 @@ async def _send_dashboard(message: Message) -> None:
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
+
+    # Check for referral start parameter (e.g., ref_1)
+    if message.text and len(message.text.split()) > 1:
+        param = message.text.split()[1]
+        if param.startswith("ref_"):
+            try:
+                tutor_id = int(param.split("_")[1])
+                await start_student_registration(message, state, tutor_id)
+                return
+            except (ValueError, IndexError):
+                pass
+
     if message.text and "gcal_success" in message.text:
         await message.answer("🎉 <b>Google Календарь успешно подключен!</b>\n\nТеперь все новые записи будут автоматически появляться в вашем календаре, а занятые слоты будут блокироваться на лендинге.", parse_mode="HTML")
     await _send_dashboard(message)
@@ -294,6 +383,152 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 async def cmd_home(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _send_dashboard(message)
+
+
+# ── Student Registration Flow (Deep Linking) ─────────────────────────
+
+async def start_student_registration(message: Message, state: FSMContext, tutor_id: int) -> None:
+    tg_id = message.from_user.id
+    async with async_session_factory() as session:
+        # Prevent tutor from registering as their own student
+        tutor = await session.get(Tutor, tutor_id)
+        if tutor and tutor.tg_id == tg_id:
+            await message.answer(
+                "⚠️ <b>Вы перешли по собственной ссылке для записи учеников!</b>\n\n"
+                "Бот не может зарегистрировать вас как вашего собственного ученика.\n"
+                "Отправьте эту ссылку вашему ученику или откройте её с другого аккаунта Telegram для тестирования.",
+                parse_mode="HTML"
+            )
+            return
+
+        # Check if already registered student
+        stmt = select(Student).where(Student.telegram_id == tg_id)
+        res = await session.execute(stmt)
+        student = res.scalar_one_or_none()
+        
+        if student:
+            # Student is already registered! Just show the welcome dashboard
+            await _send_dashboard(message)
+            return
+
+        # Store tutor_id in state
+        await state.update_data(reg_tutor_id=tutor_id)
+        
+    await state.set_state(StudentRegistrationStates.waiting_full_name)
+    await message.answer(
+        f"👋 <b>Добро пожаловать в AcademicLink!</b>\n\n"
+        f"Давайте зарегистрируем вас как ученика, чтобы вы могли записываться на занятия и получать напоминания.\n\n"
+        f"👤 <b>Введите ваши Имя и Фамилию:</b>",
+        parse_mode="HTML",
+        reply_markup=BACK_KB
+    )
+
+
+@router.message(StudentRegistrationStates.waiting_full_name)
+async def process_student_reg_name(message: Message, state: FSMContext) -> None:
+    name = message.text.strip()
+    if len(name) < 2 or len(name) > 100:
+        await message.answer("❌ Пожалуйста, введите корректные Имя и Фамилию (от 2 до 100 символов).")
+        return
+    
+    await state.update_data(reg_full_name=name)
+    await state.set_state(StudentRegistrationStates.waiting_phone)
+    
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    phone_kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Поделиться контактом", request_contact=True)],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    
+    await message.answer(
+        "📞 <b>Отлично! Теперь пришлите ваш номер телефона.</b>\n\n"
+        "Вы можете нажать кнопку ниже, чтобы автоматически поделиться своим номером, "
+        "или ввести его вручную в международном формате (например, <code>+79001234567</code>).",
+        parse_mode="HTML",
+        reply_markup=phone_kb
+    )
+
+
+@router.message(StudentRegistrationStates.waiting_phone, F.contact | F.text)
+async def process_student_reg_phone(message: Message, state: FSMContext) -> None:
+    import re
+    phone = ""
+    if message.contact:
+        phone = message.contact.phone_number
+        if not phone.startswith("+"):
+            phone = "+" + phone
+    else:
+        cleaned = message.text.strip()
+        if not cleaned.startswith("+"):
+            if cleaned.startswith("7") or cleaned.startswith("9"):
+                cleaned = "+" + cleaned
+        _PHONE_RE = re.compile(r"^\+\d{10,15}$")
+        if not _PHONE_RE.match(cleaned):
+            await message.answer(
+                "❌ Номер телефона должен быть в международном формате (начиная с +).\n"
+                "<i>Например: +79001234567</i>",
+                parse_mode="HTML"
+            )
+            return
+        phone = cleaned
+
+    data = await state.get_data()
+    full_name = data["reg_full_name"]
+    tutor_id = data["reg_tutor_id"]
+    tg_id = message.from_user.id
+    username = message.from_user.username
+
+    async with async_session_factory() as session:
+        # Check if student with this phone already exists in DB
+        stmt = select(Student).where(Student.phone == phone)
+        res = await session.execute(stmt)
+        student = res.scalar_one_or_none()
+
+        if student is None:
+            # Create brand new student
+            student = Student(
+                full_name=full_name,
+                phone=phone,
+                telegram_id=tg_id,
+                telegram_username=username,
+            )
+            session.add(student)
+        else:
+            # Link existing student record
+            student.telegram_id = tg_id
+            student.full_name = full_name
+            if username:
+                student.telegram_username = username
+
+        await session.commit()
+        
+        # Generate student WebApp keyboard
+        from aiogram.types import WebAppInfo
+        from app.core.config import settings
+        web_app_url = f"{settings.web_url}/book/{tutor_id}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📅 Записаться на занятие",
+                    web_app=WebAppInfo(url=web_app_url)
+                )
+            ]
+        ])
+
+        await state.clear()
+        await message.answer(
+            f"🎉 <b>Регистрация успешно завершена!</b>\n\n"
+            f"👤 Имя: <b>{full_name}</b>\n"
+            f"📞 Телефон: <b>{phone}</b>\n\n"
+            f"Теперь вы зарегистрированы в системе <b>AcademicLink</b> и будете получать уведомления.\n"
+            f"Вы можете записаться на занятие прямо через кнопку ниже!",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -682,11 +917,20 @@ def _settings_text(tutor: Tutor, slots: list[AvailabilitySlot]) -> str:
     remind_icon = "🔔" if tutor.wants_reminders else "🔕"
     gcal_status = "🟢 Подключен" if tutor.google_token_json else "🔴 Не подключен"
 
+    from app.core.config import settings
+    from app.core.bot import get_bot_username
+    bot_username = get_bot_username()
+
+    web_url_link = f"<code>{settings.web_url}/book/{tutor.id}</code>"
+    tg_invite_link = f"<code>https://t.me/{bot_username}?start=ref_{tutor.id}</code>"
+
     return (
         f"⚙️ <b>Настройки</b>\n\n"
         f"👤 <b>{tutor.name}</b>  ·  {icon} {status}\n"
         f"{link_text}\n"
         f"📅 <b>Google Календарь:</b> {gcal_status}\n\n"
+        f"🌐 <b>Сайт для записи:</b>\n{web_url_link}\n\n"
+        f"🤖 <b>Ссылка для записи в Telegram:</b>\n{tg_invite_link}\n\n"
         f"⏰ <b>Рабочие часы:</b>\n"
         f"{schedule_text}\n\n"
         f"{remind_icon} <b>Напоминания:</b> {'Вкл' if tutor.wants_reminders else 'Откл'}\n"
@@ -699,10 +943,16 @@ def _settings_kb(tutor: Tutor) -> InlineKeyboardMarkup:
     
     from app.core.config import settings
     
+    is_localhost = "localhost" in settings.web_url or "127.0.0.1" in settings.web_url
+    
     gcal_btn = (
         InlineKeyboardButton(text="📅 Отключить Google", callback_data="gcal_disconnect")
         if tutor.google_token_json
-        else InlineKeyboardButton(text="📅 Подключить Google", url=f"{settings.web_url}/auth/google/login/{tutor.id}")
+        else (
+            InlineKeyboardButton(text="📅 Подключить Google", callback_data="gcal_localhost_warning")
+            if is_localhost
+            else InlineKeyboardButton(text="📅 Подключить Google", url=f"{settings.web_url}/api/v1/auth/google/login/{tutor.id}")
+        )
     )
     
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -850,8 +1100,16 @@ async def cb_quick_block_today(callback: CallbackQuery) -> None:
 
         from app.core.bot import get_bot
         bot = get_bot()
+        from app.services.google_calendar_service import delete_calendar_event
         for b in overlapping:
             b.status = BookingStatus.CANCELLED
+            
+            # Delete Google Calendar event if it was synced
+            try:
+                await delete_calendar_event(session, b)
+            except Exception as exc:
+                logger.error("Failed to delete Google event for quick blocked booking #%d: %s", b.id, exc)
+
             if b.student and b.student.telegram_id and bot:
                 try:
                     await bot.send_message(
@@ -969,8 +1227,15 @@ async def process_absence_reason(message: Message, state: FSMContext) -> None:
         from app.core.bot import get_bot
         bot = get_bot()
 
+        from app.services.google_calendar_service import delete_calendar_event
         for b in overlapping:
             b.status = BookingStatus.CANCELLED
+            
+            # Delete Google Calendar event if it was synced
+            try:
+                await delete_calendar_event(session, b)
+            except Exception as exc:
+                logger.error("Failed to delete Google event for absence cancelled booking #%d: %s", b.id, exc)
             
             # Notify student
             if b.student and b.student.telegram_id and bot:
@@ -1116,6 +1381,7 @@ async def cb_confirm(callback: CallbackQuery) -> None:
 
         booking.status = BookingStatus.CONFIRMED
         await session.commit()
+        await session.refresh(booking, attribute_names=["student"])
 
         # Sync to Google Calendar
         from app.services.google_calendar_service import sync_booking_to_calendar
@@ -1241,6 +1507,7 @@ async def cb_cancel_confirm(callback: CallbackQuery) -> None:
 
         booking.status = BookingStatus.CANCELLED
         await session.commit()
+        await session.refresh(booking, attribute_names=["student"])
 
         # Delete Google Calendar event
         from app.services.google_calendar_service import delete_calendar_event
@@ -1420,6 +1687,16 @@ async def cb_gcal_disconnect(callback: CallbackQuery) -> None:
         _settings_text(tutor, slots), parse_mode="HTML", reply_markup=_settings_kb(tutor),
     )
     await callback.answer("📅 Google Календарь отключен.")
+
+
+@router.callback_query(F.data == "gcal_localhost_warning")
+async def cb_gcal_localhost_warning(callback: CallbackQuery) -> None:
+    await callback.answer(
+        "⚠️ Режим разработки\n\n"
+        "Telegram не поддерживает ссылки 'localhost' в кнопках.\n\n"
+        "Чтобы протестировать подключение Google Календаря, используйте ngrok и настройте публичный WEB_URL в файле .env.",
+        show_alert=True,
+    )
 
 
 # ── Student Deletion (Archive) ───────────────────────────────────────
@@ -2203,15 +2480,19 @@ async def cb_manual_book_service(callback: CallbackQuery, state: FSMContext) -> 
         student_tg_id = booking.student.telegram_id if booking.student else None
 
     await state.clear()
-    await callback.message.edit_text(
+    await callback.message.answer(
         f"✅ <b>Занятие создано!</b>\n\n"
         f"👤 {student_name}\n"
         f"🕒 {fmt_full(appointment_time)}\n"
         f"📚 {booking.service_type}\n"
         f"🟢 Подтверждено",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=MAIN_MENU
     )
-    await callback.message.answer("Главное меню", reply_markup=MAIN_MENU)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.answer()
 
     # ── Notify student ────────────────────────────────────────────────
