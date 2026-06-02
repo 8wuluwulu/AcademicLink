@@ -27,6 +27,8 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    WebAppInfo,
 )
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -93,6 +95,10 @@ class ManualBookingStates(StatesGroup):
 
 class TutorSettingsStates(StatesGroup):
     waiting_meeting_link = State()
+    waiting_sbp_phone = State()
+    waiting_sbp_bank = State()
+    waiting_sbp_link = State()
+    waiting_sbp_qr = State()
 
 
 class ServiceManagement(StatesGroup):
@@ -113,6 +119,136 @@ class StudentRegistrationStates(StatesGroup):
 async def _get_tutor(tg_id: int, session) -> Tutor | None:
     result = await session.execute(select(Tutor).where(Tutor.tg_id == tg_id))
     return result.scalar_one_or_none()
+
+
+def build_student_menu(
+    tutor_id: int | None,
+    tg_username: str | None = None,
+    tg_id: int | None = None,
+) -> ReplyKeyboardMarkup:
+    keyboard_buttons = []
+    if tutor_id:
+        from app.core.config import settings
+        from urllib.parse import urlencode
+        
+        params = {}
+        if tg_username:
+            params["tg_username"] = tg_username
+        if tg_id:
+            params["tg_id"] = str(tg_id)
+            
+        query_str = f"?{urlencode(params)}" if params else ""
+        web_app_url = f"{settings.web_url}/book/{tutor_id}{query_str}"
+        keyboard_buttons.append(
+            KeyboardButton(text="📅 Записаться", web_app=WebAppInfo(url=web_app_url))
+        )
+    keyboard_buttons.append(KeyboardButton(text="🗂 Мои записи"))
+    return ReplyKeyboardMarkup(
+        keyboard=[keyboard_buttons],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие…"
+    )
+
+
+from aiogram import BaseMiddleware
+from typing import Callable, Dict, Any, Awaitable
+
+class TutorCallbackMiddleware(BaseMiddleware):
+    """Secures all callback queries: only registered tutors, only active subscriptions."""
+    async def __call__(
+        self,
+        handler: Callable[[CallbackQuery, Dict[str, Any]], Awaitable[Any]],
+        event: CallbackQuery,
+        data: Dict[str, Any]
+    ) -> Any:
+        async with async_session_factory() as session:
+            tutor = await _get_tutor(event.from_user.id, session)
+            if tutor is None:
+                await event.answer("⚠️ Это действие доступно только репетиторам.", show_alert=True)
+                return
+            # Allow P2P callbacks through even for expired subscriptions
+            # so tutors can still confirm/reject payments they already received
+            p2p_callbacks = ("confirm_p2p:", "cancel_p2p:")
+            is_p2p = any(event.data.startswith(p) for p in p2p_callbacks) if event.data else False
+            if not is_p2p:
+                sub_expires = tutor.subscription_expires_at
+                if sub_expires and sub_expires.tzinfo is None:
+                    sub_expires = sub_expires.replace(tzinfo=timezone.utc)
+                if sub_expires is None or sub_expires < datetime.now(timezone.utc):
+                    await event.answer(
+                        "⚠️ Ваша подписка на AcademicLink истекла. "
+                        "Свяжитесь с администратором для продления. Стоимость: 990 ₽/мес.",
+                        show_alert=True,
+                    )
+                    return
+        return await handler(event, data)
+
+router.callback_query.outer_middleware(TutorCallbackMiddleware())
+
+
+class TutorMessageMiddleware(BaseMiddleware):
+    """Secures all command and message inputs from tutors: blocks if subscription is expired/not set."""
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any]
+    ) -> Any:
+        from app.core.config import settings
+        is_admin = settings.admin_tg_id is not None and event.from_user.id == settings.admin_tg_id
+        is_start = event.text and event.text.startswith("/start")
+
+        if not is_admin and not is_start:
+            async with async_session_factory() as session:
+                tutor = await _get_tutor(event.from_user.id, session)
+                if tutor is not None:
+                    sub_expires = tutor.subscription_expires_at
+                    if sub_expires and sub_expires.tzinfo is None:
+                        sub_expires = sub_expires.replace(tzinfo=timezone.utc)
+                    if sub_expires is None or sub_expires < datetime.now(timezone.utc):
+                        await event.answer(
+                            "⚠️ Ваша подписка на AcademicLink истекла. "
+                            "Свяжитесь с администратором для продления. Стоимость: 990 ₽/мес.",
+                            parse_mode="HTML"
+                        )
+                        return
+        return await handler(event, data)
+
+router.message.outer_middleware(TutorMessageMiddleware())
+
+
+async def _handle_non_tutor(message: Message, session) -> None:
+    """Handles messages from non-tutors gracefully by resetting their keyboard or showing onboarding."""
+    tg_id = message.from_user.id
+    student_stmt = select(Student).where(Student.telegram_id == tg_id)
+    student_res = await session.execute(student_stmt)
+    linked_student = student_res.scalar_one_or_none()
+    if linked_student:
+        booking_stmt = select(Booking.tutor_id).where(Booking.student_id == linked_student.id).limit(1)
+        booking_res = await session.execute(booking_stmt)
+        tutor_id = booking_res.scalar_one_or_none()
+        if tutor_id is None:
+            tutor_res = await session.execute(select(Tutor.id).limit(1))
+            tutor_id = tutor_res.scalar_one_or_none()
+        reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
+        await message.answer(
+            "⚠️ <b>Этот раздел доступен только репетиторам.</b>\n\n"
+            "Вы зарегистрированы как ученик. Используйте кнопки меню ниже для управления вашими записями.",
+            parse_mode="HTML",
+            reply_markup=reply_kb
+        )
+    else:
+        from aiogram.types import ReplyKeyboardRemove
+        await message.answer(
+            "👋 <b>Добро пожаловать в AcademicLink!</b>\n\n"
+            "Вы зашли в бот системы записи и планирования занятий.\n\n"
+            "⚠️ <b>Вы не зарегистрированы в системе.</b>\n"
+            "Если вы ученик, пожалуйста, перейдите по специальной ссылке для записи, "
+            "которую вам предоставил ваш репетитор, чтобы пройти регистрацию.\n\n"
+            "Если вы репетитор, убедитесь, что ваш Telegram ID настроен корректно.",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove()
+        )
 
 
 _NOT_REGISTERED = (
@@ -197,9 +333,25 @@ async def _send_dashboard(message: Message) -> None:
             status_icon = "🟢" if tutor.is_active else "🔴"
             status_text = "Активен" if tutor.is_active else "Пауза"
 
+            sub_banner = ""
+            if tutor.subscription_expires_at is None:
+                sub_banner = "⚠️ <b>Внимание: Подписка не оформлена!</b> Расписание заблокировано.\n\n"
+            else:
+                sub_expires = tutor.subscription_expires_at
+                if sub_expires.tzinfo is None:
+                    sub_expires = sub_expires.replace(tzinfo=timezone.utc)
+                now_utc = datetime.now(timezone.utc)
+                if sub_expires < now_utc:
+                    sub_banner = "⚠️ <b>Внимание: Ваша подписка истекла!</b> Расписание заблокировано.\n\n"
+                else:
+                    days_left = (sub_expires - now_utc).days
+                    if days_left <= 3:
+                        sub_banner = f"⚠️ <b>Внимание: Подписка истекает через {days_left} дн.!</b> Не забудьте продлить её.\n\n"
+
             text = (
                 f"{_greeting()}, <b>{tutor.name}</b>!\n\n"
                 f"👤 {tutor.name}  ·  {status_icon} {status_text}\n\n"
+                f"{sub_banner}"
                 f"📅 Подтверждено на сегодня: <b>{today_confirmed}</b>\n"
                 f"🟡 Новые заявки: <b>{pending_count}</b>\n"
                 f"👥 Всего учеников: <b>{total_students}</b>\n\n"
@@ -222,27 +374,15 @@ async def _send_dashboard(message: Message) -> None:
                 tutor_res = await session.execute(select(Tutor.id).limit(1))
                 tutor_id = tutor_res.scalar_one_or_none()
 
-            kb = None
-            if tutor_id:
-                from aiogram.types import WebAppInfo
-                from app.core.config import settings
-                web_app_url = f"{settings.web_url}/book/{tutor_id}"
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="📅 Записаться на занятие",
-                            web_app=WebAppInfo(url=web_app_url)
-                        )
-                    ]
-                ])
+            reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
 
             await message.answer(
                 f"👋 Рады видеть вас снова, <b>{linked_student.full_name}</b>!\n\n"
                 f"Вы вошли как ученик в системе <b>AcademicLink</b>. "
                 f"Здесь вы будете получать напоминания о ваших занятиях.\n\n"
-                f"Вы можете записаться на новое занятие прямо через кнопку ниже!",
+                f"Используйте кнопки меню ниже, чтобы записаться на новое занятие или посмотреть свои записи.",
                 parse_mode="HTML",
-                reply_markup=kb
+                reply_markup=reply_kb
             )
             return
 
@@ -267,42 +407,32 @@ async def _send_dashboard(message: Message) -> None:
                     tutor_res = await session.execute(select(Tutor.id).limit(1))
                     tutor_id = tutor_res.scalar_one_or_none()
 
-                kb = None
-                if tutor_id:
-                    from aiogram.types import WebAppInfo
-                    from app.core.config import settings
-                    web_app_url = f"{settings.web_url}/book/{tutor_id}"
-                    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="📅 Записаться на занятие",
-                                web_app=WebAppInfo(url=web_app_url)
-                            )
-                        ]
-                    ])
+                reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
 
                 await message.answer(
                     f"👋 Привет, <b>{student.full_name}</b>!\n\n"
                     f"Я — бот системы <b>AcademicLink</b>. Теперь вы будете получать "
                     f"уведомления и напоминания о ваших занятиях прямо здесь.\n\n"
                     f"✅ Ваш профиль успешно привязан.\n"
-                    f"Вы можете записаться на занятие прямо через кнопку ниже!",
+                    f"Используйте кнопки меню ниже, чтобы записаться на занятие или посмотреть свои записи.",
                     parse_mode="HTML",
-                    reply_markup=kb
+                    reply_markup=reply_kb
                 )
                 return
 
-        # ── 3. Onboarding: Automatically register as Tutor ───────────
+        # ── 3. Onboarding: Automatically register as Tutor ──
         from datetime import time
         from app.core.config import settings
 
-        # Create Tutor
+        # Create Tutor with 30 days trial
         tutor = Tutor(
             tg_id=tg_id,
             name=name,
             is_active=True,
             lesson_duration=60,
             buffer_time=15,
+            subscription_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            subscription_status="trial",
         )
         session.add(tutor)
         await session.flush()  # gets tutor.id
@@ -314,6 +444,7 @@ async def _send_dashboard(message: Message) -> None:
             duration=60,
             buffer_time=15,
             price=1500,
+            is_active=True,
         )
         session.add(default_service)
 
@@ -335,7 +466,7 @@ async def _send_dashboard(message: Message) -> None:
         # Beautiful greeting message with personal link and button
         text = (
             f"🎉 <b>Добро пожаловать в AcademicLink, {name}!</b>\n\n"
-            f"Я автоматически зарегистрировал вас как репетитора и создал стартовую услугу «Консультация».\n\n"
+            f"Я автоматически зарегистрировал вас как репетитора и активировал бесплатный пробный период на 30 дней.\n\n"
             f"🌐 <b>Ваша ссылка для записи через сайт (в клик копируется):</b>\n"
             f"<code>{settings.web_url}/book/{tutor.id}</code>\n\n"
             f"🤖 <b>Ваша ссылка для записи через Telegram:</b>\n"
@@ -420,7 +551,7 @@ async def start_student_registration(message: Message, state: FSMContext, tutor_
         f"Давайте зарегистрируем вас как ученика, чтобы вы могли записываться на занятия и получать напоминания.\n\n"
         f"👤 <b>Введите ваши Имя и Фамилию:</b>",
         parse_mode="HTML",
-        reply_markup=BACK_KB
+        reply_markup=ReplyKeyboardRemove()
     )
 
 
@@ -434,22 +565,11 @@ async def process_student_reg_name(message: Message, state: FSMContext) -> None:
     await state.update_data(reg_full_name=name)
     await state.set_state(StudentRegistrationStates.waiting_phone)
     
-    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-    phone_kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📱 Поделиться контактом", request_contact=True)],
-            [KeyboardButton(text="◀️ Назад")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    
     await message.answer(
         "📞 <b>Отлично! Теперь пришлите ваш номер телефона.</b>\n\n"
-        "Вы можете нажать кнопку ниже, чтобы автоматически поделиться своим номером, "
-        "или ввести его вручную в международном формате (например, <code>+79001234567</code>).",
+        "Пожалуйста, введите его в международном формате (например, <code>+79001234567</code>).",
         parse_mode="HTML",
-        reply_markup=phone_kb
+        reply_markup=ReplyKeyboardRemove()
     )
 
 
@@ -506,29 +626,76 @@ async def process_student_reg_phone(message: Message, state: FSMContext) -> None
 
         await session.commit()
         
-        # Generate student WebApp keyboard
-        from aiogram.types import WebAppInfo
-        from app.core.config import settings
-        web_app_url = f"{settings.web_url}/book/{tutor_id}"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📅 Записаться на занятие",
-                    web_app=WebAppInfo(url=web_app_url)
-                )
-            ]
-        ])
+        reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
 
         await state.clear()
+        
+        # Send registration completion message and show the persistent student reply keyboard
         await message.answer(
             f"🎉 <b>Регистрация успешно завершена!</b>\n\n"
             f"👤 Имя: <b>{full_name}</b>\n"
             f"📞 Телефон: <b>{phone}</b>\n\n"
-            f"Теперь вы зарегистрированы в системе <b>AcademicLink</b> и будете получать уведомления.\n"
-            f"Вы можете записаться на занятие прямо через кнопку ниже!",
+            f"Теперь вы зарегистрированы в системе <b>AcademicLink</b> и будете получать уведомления.\n\n"
+            f"Используйте кнопки меню ниже, чтобы записаться на занятие или посмотреть свои записи.",
             parse_mode="HTML",
-            reply_markup=kb
+            reply_markup=reply_kb
         )
+
+
+@router.message(F.text.func(lambda t: t and "мои записи" in t.lower()))
+async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    tg_id = message.from_user.id
+    
+    async with async_session_factory() as session:
+        # Check if they are a registered student
+        student_stmt = select(Student).where(Student.telegram_id == tg_id)
+        student_res = await session.execute(student_stmt)
+        student = student_res.scalar_one_or_none()
+        
+        if not student:
+            await message.answer("⚠️ Вы не зарегистрированы как ученик в системе.")
+            return
+            
+        # Get active bookings (PENDING, CONFIRMED) scheduled in the future or recent
+        now_utc = datetime.now(timezone.utc)
+        bookings_stmt = (
+            select(Booking)
+            .where(
+                Booking.student_id == student.id,
+                Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+                Booking.appointment_time >= now_utc - timedelta(hours=2)
+            )
+            .order_by(Booking.appointment_time.asc())
+        )
+        bookings_res = await session.execute(bookings_stmt)
+        bookings = bookings_res.scalars().all()
+        
+        if not bookings:
+            text = (
+                "🗂 <b>Ваши записи</b>\n\n"
+                "У вас пока нет предстоящих записей на занятия.\n\n"
+                "Вы можете записаться на новое занятие с помощью кнопки «📅 Записаться» в меню!"
+            )
+            await message.answer(text, parse_mode="HTML")
+            return
+            
+        # Format the list of bookings beautifully
+        lines = ["🗂 <b>Ваши предстоящие занятия:</b>\n"]
+        for b in bookings:
+            dt_str = fmt_date(b.appointment_time)
+            time_str = fmt_time(b.appointment_time)
+            status_emoji = STATUS_EMOJI.get(b.status.value, "🟡")
+            status_text = "подтверждено" if b.status == BookingStatus.CONFIRMED else "ожидает подтверждения"
+            
+            lines.append(
+                f"{status_emoji} <b>{dt_str} в {time_str}</b>\n"
+                f"   Услуга: {b.service_type}\n"
+                f"   Статус: <i>{status_text}</i>\n"
+            )
+            
+        text = "\n".join(lines)
+        await message.answer(text, parse_mode="HTML")
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -606,8 +773,15 @@ async def _build_bookings_page(
 @router.message(F.text == "📅 Расписание")
 async def cmd_schedule(message: Message, state: FSMContext) -> None:
     await state.clear()
+    tg_id = message.from_user.id
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(tg_id, session)
+        if tutor is None:
+            await _handle_non_tutor(message, session)
+            return
+
     text, kb = await _build_bookings_page(
-        message.from_user.id, 0, [BookingStatus.CONFIRMED], "📅 <b>Расписание</b>", "page_sch"
+        tg_id, 0, [BookingStatus.CONFIRMED], "📅 <b>Расписание</b>", "page_sch"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=kb or MAIN_MENU)
 
@@ -615,8 +789,15 @@ async def cmd_schedule(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "🟡 Новые заявки")
 async def cmd_new_requests(message: Message, state: FSMContext) -> None:
     await state.clear()
+    tg_id = message.from_user.id
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(tg_id, session)
+        if tutor is None:
+            await _handle_non_tutor(message, session)
+            return
+
     text, kb = await _build_bookings_page(
-        message.from_user.id, 0, [BookingStatus.PENDING], "🟡 <b>Новые заявки</b>", "page_new"
+        tg_id, 0, [BookingStatus.PENDING], "🟡 <b>Новые заявки</b>", "page_new"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=kb or MAIN_MENU)
 
@@ -661,7 +842,7 @@ async def cmd_students(message: Message, state: FSMContext) -> None:
     async with async_session_factory() as session:
         tutor = await _get_tutor(tg_id, session)
         if tutor is None:
-            await message.answer(_NOT_REGISTERED, parse_mode="HTML")
+            await _handle_non_tutor(message, session)
             return
 
         # Distinct students via a grouped subquery on student_id
@@ -809,6 +990,12 @@ async def process_student_phone(message: Message, state: FSMContext) -> None:
 async def cmd_student_direct(message: Message, state: FSMContext) -> None:
     """Direct /student +998... command (bypasses FSM)."""
     await state.clear()
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor is None:
+            await _handle_non_tutor(message, session)
+            return
+
     parts = message.text.strip().split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         await message.answer(
@@ -966,6 +1153,9 @@ def _settings_kb(tutor: Tutor) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="⏰ Мои слоты", callback_data="manage_slots"),
+            InlineKeyboardButton(text="💳 Реквизиты СБП", callback_data="manage_sbp"),
+        ],
+        [
             gcal_btn
         ],
     ])
@@ -991,6 +1181,255 @@ async def cmd_settings(message: Message, state: FSMContext) -> None:
     await message.answer(
         _settings_text(tutor, slots), parse_mode="HTML", reply_markup=_settings_kb(tutor),
     )
+
+
+# ── SBP Settings Handlers ───────────────────────────────────────────
+
+def _sbp_settings_text(tutor: Tutor) -> str:
+    phone = tutor.sbp_phone or "<i>не указан</i>"
+    bank = tutor.sbp_bank or "<i>не указан</i>"
+    link = f"<code>{tutor.sbp_link}</code>" if tutor.sbp_link else "<i>не указана</i>"
+    qr_status = "🟢 Загружен" if tutor.sbp_qr_url else "🔴 Не загружен"
+    
+    return (
+        f"💳 <b>Реквизиты СБП для переводов учеников</b>\n\n"
+        f"Укажите ваши реквизиты, чтобы при записи на сайте ученики могли выбрать способ "
+        f"оплаты «Перевод СБП», увидеть ваши данные и сгенерировать QR-код.\n\n"
+        f"📱 <b>Телефон СБП:</b> {phone}\n"
+        f"🏦 <b>Банк-получатель:</b> {bank}\n"
+        f"🔗 <b>Ссылка на перевод (Tinkoff/T-Bank):</b> {link}\n"
+        f"🖼️ <b>Статический QR-код:</b> {qr_status}\n\n"
+        f"<i>Вы можете загрузить изображение вашего личного статического QR-кода СБП, "
+        f"который вы сохранили из мобильного приложения вашего банка.</i>"
+    )
+
+def _sbp_settings_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📱 Изменить телефон", callback_data="sbp_set_phone"),
+            InlineKeyboardButton(text="🏦 Изменить банк", callback_data="sbp_set_bank"),
+        ],
+        [
+            InlineKeyboardButton(text="🔗 Ссылка на перевод", callback_data="sbp_set_link"),
+            InlineKeyboardButton(text="🖼️ Загрузить QR-код", callback_data="sbp_set_qr"),
+        ],
+        [
+            InlineKeyboardButton(text="◀️ Назад в настройки", callback_data="back_to_settings"),
+        ]
+    ])
+
+
+@router.callback_query(F.data == "manage_sbp")
+async def cb_manage_sbp(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(callback.from_user.id, session)
+        if tutor is None:
+            await callback.answer("Ошибка: вы не зарегистрированы.", show_alert=True)
+            return
+            
+    await callback.message.edit_text(
+        _sbp_settings_text(tutor),
+        parse_mode="HTML",
+        reply_markup=_sbp_settings_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sbp_set_phone")
+async def cb_sbp_set_phone(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(TutorSettingsStates.waiting_sbp_phone)
+    await callback.message.edit_text(
+        "📱 <b>Введите ваш номер телефона для переводов СБП:</b>\n\n"
+        "Например: <code>+79991234567</code>\n\n"
+        "<i>Для отмены пришлите /cancel</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(TutorSettingsStates.waiting_sbp_phone)
+async def process_sbp_phone(message: Message, state: FSMContext) -> None:
+    if message.text == "/cancel":
+        await state.clear()
+        # Redirect back to settings page
+        await _show_settings_after_input(message)
+        return
+
+    phone = message.text.strip()
+    digits = "".join(c for c in phone if c.isdigit())
+    if len(digits) < 10 or len(digits) > 15:
+        await message.answer("❌ Пожалуйста, введите корректный номер телефона (например, +79991234567).")
+        return
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor:
+            tutor.sbp_phone = phone
+            await session.commit()
+            
+    await state.clear()
+    await message.answer("✅ Номер телефона СБП успешно сохранен!")
+    await _show_settings_after_input(message)
+
+
+@router.callback_query(F.data == "sbp_set_bank")
+async def cb_sbp_set_bank(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(TutorSettingsStates.waiting_sbp_bank)
+    await callback.message.edit_text(
+        "🏦 <b>Введите название банка для перевода СБП:</b>\n\n"
+        "Например: <code>Т-Банк (Тинькофф)</code> или <code>Сбербанк</code>\n\n"
+        "<i>Для отмены пришлите /cancel</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(TutorSettingsStates.waiting_sbp_bank)
+async def process_sbp_bank(message: Message, state: FSMContext) -> None:
+    if message.text == "/cancel":
+        await state.clear()
+        await _show_settings_after_input(message)
+        return
+
+    bank = message.text.strip()
+    if len(bank) < 2 or len(bank) > 100:
+        await message.answer("❌ Пожалуйста, введите корректное название банка (от 2 до 100 символов).")
+        return
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor:
+            tutor.sbp_bank = bank
+            await session.commit()
+            
+    await state.clear()
+    await message.answer("✅ Банк для СБП успешно сохранен!")
+    await _show_settings_after_input(message)
+
+
+@router.callback_query(F.data == "sbp_set_link")
+async def cb_sbp_set_link(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(TutorSettingsStates.waiting_sbp_link)
+    await callback.message.edit_text(
+        "🔗 <b>Введите вашу личную ссылку для СБП-переводов:</b>\n\n"
+        "Например, ссылку на Tinkoff RM: <code>https://www.tinkoff.ru/rm/username/</code>\n\n"
+        "<i>Для отмены пришлите /cancel, для сброса пришлите 'clear'</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(TutorSettingsStates.waiting_sbp_link)
+async def process_sbp_link(message: Message, state: FSMContext) -> None:
+    if message.text == "/cancel":
+        await state.clear()
+        await _show_settings_after_input(message)
+        return
+
+    link = message.text.strip()
+    if link.lower() == "clear":
+        async with async_session_factory() as session:
+            tutor = await _get_tutor(message.from_user.id, session)
+            if tutor:
+                tutor.sbp_link = None
+                await session.commit()
+        await state.clear()
+        await message.answer("✅ Ссылка СБП сброшена!")
+        await _show_settings_after_input(message)
+        return
+
+    if not (link.startswith("http://") or link.startswith("https://")):
+        await message.answer("❌ Ссылка должна начинаться с http:// или https://.")
+        return
+
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor:
+            tutor.sbp_link = link
+            await session.commit()
+            
+    await state.clear()
+    await message.answer("✅ Ссылка на перевод успешно сохранена!")
+    await _show_settings_after_input(message)
+
+
+@router.callback_query(F.data == "sbp_set_qr")
+async def cb_sbp_set_qr(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(TutorSettingsStates.waiting_sbp_qr)
+    await callback.message.edit_text(
+        "🖼️ <b>Пришлите фотографию вашего статического QR-кода СБП:</b>\n\n"
+        "Этот QR-код вы можете сохранить в своем мобильном приложении банка.\n\n"
+        "<i>Для отмены пришлите /cancel, для сброса пришлите 'clear'</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(TutorSettingsStates.waiting_sbp_qr)
+async def process_sbp_qr(message: Message, state: FSMContext) -> None:
+    if message.text and message.text == "/cancel":
+        await state.clear()
+        await _show_settings_after_input(message)
+        return
+
+    if message.text and message.text.strip().lower() == "clear":
+        async with async_session_factory() as session:
+            tutor = await _get_tutor(message.from_user.id, session)
+            if tutor:
+                tutor.sbp_qr_url = None
+                await session.commit()
+        await state.clear()
+        await message.answer("✅ Изображение QR-кода СБП сброшено!")
+        await _show_settings_after_input(message)
+        return
+
+    if not message.photo:
+        await message.answer("❌ Пожалуйста, пришлите изображение (фотографию) вашего QR-кода.")
+        return
+
+    photo = message.photo[-1]
+    
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor is None:
+            await state.clear()
+            await message.answer("Ошибка: репетитор не найден.")
+            return
+        
+        tutor_id = tutor.id
+        
+        # Download photo to static/qrs/
+        import os
+        from app.core.bot import get_bot
+        bot = get_bot()
+        if bot:
+            file_info = await bot.get_file(photo.file_id)
+            os.makedirs("static/qrs", exist_ok=True)
+            local_path = f"static/qrs/tutor_{tutor_id}.png"
+            await bot.download_file(file_info.file_path, local_path)
+            
+            # Save the url path in db
+            tutor.sbp_qr_url = f"/static/qrs/tutor_{tutor_id}.png"
+            await session.commit()
+            
+    await state.clear()
+    await message.answer("✅ Изображение QR-кода СБП успешно загружено!")
+    await _show_settings_after_input(message)
+
+
+async def _show_settings_after_input(message: Message) -> None:
+    """Helper to display settings page after an FSM input is complete."""
+    async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor is None:
+            return
+        result = await session.execute(
+            select(AvailabilitySlot)
+            .where(AvailabilitySlot.tutor_id == tutor.id)
+            .order_by(AvailabilitySlot.weekday, AvailabilitySlot.start_time)
+        )
+        slots = result.scalars().all()
+    await message.answer(
+        _settings_text(tutor, slots), parse_mode="HTML", reply_markup=_settings_kb(tutor),
+    )
+
 
 
 
@@ -2677,3 +3116,218 @@ async def cb_broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> Non
     await state.clear()
     await callback.message.edit_text("📢 Рассылка отменена.")
     await callback.answer()
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  💳 P2P SBP — Confirm / Reject Payment
+# ═════════════════════════════════════════════════════════════════════
+
+
+@router.callback_query(F.data.startswith("confirm_p2p:"))
+async def cb_confirm_p2p(callback: CallbackQuery) -> None:
+    """Репетитор подтверждает, что получил платёж через СБП."""
+    booking_id = int(callback.data.split(":")[1])
+    student_tg_id = None
+    appt_text = ""
+    service_name = ""
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student))
+        )
+        booking = result.scalar_one_or_none()
+
+        if booking is None:
+            await callback.answer("Запись не найдена.", show_alert=True)
+            return
+        if booking.status != BookingStatus.PENDING:
+            await callback.answer("Эта запись уже обработана.", show_alert=True)
+            await callback.message.edit_reply_markup(reply_markup=None)
+            return
+
+        booking.status = BookingStatus.CONFIRMED
+        await session.commit()
+        await session.refresh(booking, attribute_names=["student"])
+
+        # Sync to Google Calendar
+        from app.services.google_calendar_service import sync_booking_to_calendar
+        try:
+            await sync_booking_to_calendar(session, booking)
+        except Exception as exc:
+            logger.error("Failed to sync P2P booking #%d to Calendar: %s", booking.id, exc)
+
+        if booking.student and booking.student.telegram_id:
+            student_tg_id = booking.student.telegram_id
+        appt_text = fmt_full(booking.appointment_time)
+        service_name = booking.service_type
+
+    await callback.message.edit_text(
+        f"🟢 <b>Оплата подтверждена, запись утверждена</b>\n\n"
+        f"📚 {service_name}\n"
+        f"🕒 {appt_text}",
+        parse_mode="HTML",
+    )
+    await callback.answer("Оплата подтверждена ✅")
+    logger.info("P2P booking #%d confirmed by tutor tg_id=%d", booking_id, callback.from_user.id)
+
+    # Notify student
+    if student_tg_id:
+        from app.core.bot import get_bot
+        bot = get_bot()
+        if bot:
+            try:
+                await bot.send_message(
+                    chat_id=student_tg_id,
+                    text=(
+                        f"🟢 <b>Ваша оплата подтверждена!</b>\n\n"
+                        f"🕒 {appt_text}\n"
+                        f"📚 {service_name}\n\n"
+                        f"<i>До встречи!</i>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                logger.error("Failed to notify student tg_id=%d of P2P confirm: %s", student_tg_id, exc)
+
+
+@router.callback_query(F.data.startswith("cancel_p2p:"))
+async def cb_cancel_p2p(callback: CallbackQuery) -> None:
+    """Репетитор отклоняет запись — платёж не поступил."""
+    booking_id = int(callback.data.split(":")[1])
+    student_tg_id = None
+    appt_text = ""
+    service_name = ""
+    tg_username = None
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student))
+        )
+        booking = result.scalar_one_or_none()
+
+        if booking is None:
+            await callback.answer("Запись не найдена.", show_alert=True)
+            return
+        if booking.status != BookingStatus.PENDING:
+            await callback.answer("Эта запись уже обработана.", show_alert=True)
+            await callback.message.edit_reply_markup(reply_markup=None)
+            return
+
+        booking.status = BookingStatus.CANCELLED
+        await session.commit()
+        await session.refresh(booking, attribute_names=["student"])
+
+        tg_username = booking.student.telegram_username if booking.student else None
+        if booking.student and booking.student.telegram_id:
+            student_tg_id = booking.student.telegram_id
+        appt_text = fmt_full(booking.appointment_time)
+        service_name = booking.service_type
+
+    kb_rows = []
+    if tg_username:
+        clean = tg_username.lstrip("@")
+        kb_rows.append([InlineKeyboardButton(text="💬 Написать ученику", url=f"https://t.me/{clean}")])
+
+    await callback.message.edit_text(
+        "🔴 <b>Оплата не подтверждена, запись отклонена</b>\n\n"
+        "Вы можете связаться с учеником для уточнения деталей.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None,
+    )
+    await callback.answer("Запись отклонена")
+    logger.info("P2P booking #%d rejected by tutor tg_id=%d", booking_id, callback.from_user.id)
+
+    # Notify student
+    if student_tg_id:
+        from app.core.bot import get_bot
+        bot = get_bot()
+        if bot:
+            try:
+                await bot.send_message(
+                    chat_id=student_tg_id,
+                    text=(
+                        f"🔴 <b>Ваша запись отклонена</b>\n\n"
+                        f"🕒 {appt_text}\n"
+                        f"📚 {service_name}\n\n"
+                        f"<i>Оплата не была подтверждена преподавателем. "
+                        f"Свяжитесь с преподавателем для уточнения деталей.</i>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                logger.error("Failed to notify student tg_id=%d of P2P rejection: %s", student_tg_id, exc)
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  🔐 Admin: /extend_sub — Extend a tutor’s subscription
+# ═════════════════════════════════════════════════════════════════════
+
+
+@router.message(Command("extend_sub"))
+async def cmd_extend_sub(message: Message) -> None:
+    """Административная команда для продления подписки репетитора.
+
+    Использование: /extend_sub <tutor_id> <days>
+    Пример:  /extend_sub 1 30
+    """
+    from app.core.config import settings
+
+    # Only platform admin can use this
+    if settings.admin_tg_id is None or message.from_user.id != settings.admin_tg_id:
+        await message.answer("⛔ Эта команда доступна только администратору платформы.")
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) != 3:
+        await message.answer(
+            "❌ <b>Использование:</b> <code>/extend_sub &lt;tutor_id&gt; &lt;days&gt;</code>\n"
+            "Пример: <code>/extend_sub 1 30</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        tutor_id = int(parts[1])
+        days = int(parts[2])
+    except ValueError:
+        await message.answer("❌ tutor_id и days должны быть целыми числами.")
+        return
+
+    if days <= 0:
+        await message.answer("❌ Количество дней должно быть положительным.")
+        return
+
+    async with async_session_factory() as session:
+        tutor = await session.get(Tutor, tutor_id)
+        if tutor is None:
+            await message.answer(f"❌ Репетитор с ID {tutor_id} не найден.")
+            return
+
+        now = datetime.now(timezone.utc)
+        # Extend from current expiry if still active, otherwise from today
+        sub_expires = tutor.subscription_expires_at
+        if sub_expires and sub_expires.tzinfo is None:
+            sub_expires = sub_expires.replace(tzinfo=timezone.utc)
+        if sub_expires and sub_expires > now:
+            tutor.subscription_expires_at = sub_expires + timedelta(days=days)
+        else:
+            tutor.subscription_expires_at = now + timedelta(days=days)
+        tutor.subscription_status = "active"
+        await session.commit()
+
+        expires_text = fmt_full(tutor.subscription_expires_at)
+        tutor_name = tutor.name
+        tutor_db_id = tutor.id
+
+    await message.answer(
+        f"✅ <b>Подписка продлена!</b>\n\n"
+        f"👤 Репетитор: <b>{tutor_name}</b> (ID: {tutor_db_id})\n"
+        f"📅 Дата окончания: <b>{expires_text}</b>\n"
+        f"➕ Добавлено дней: {days}",
+        parse_mode="HTML",
+    )
+    logger.info("Admin extended subscription for tutor_id=%d by %d days", tutor_db_id, days)

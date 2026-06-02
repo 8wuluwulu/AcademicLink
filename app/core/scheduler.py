@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.database import async_session_factory
-from app.db.models import Booking, BookingStatus
+from app.db.models import Booking, BookingStatus, Tutor
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +252,57 @@ async def daily_reminder_job() -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════
+#  Job: Subscription Renewal Alerts
+# ═════════════════════════════════════════════════════════════════════
+
+
+async def subscription_renewal_alert_job() -> None:
+    """
+    Find all active tutors whose subscription expires in exactly 3 days or 1 day
+    and send them a Telegram alert:
+    "⏰ Your subscription expires in {X} days. Please renew to avoid scheduling interruptions."
+    """
+    bot = _get_bot()
+    if bot is None:
+        logger.warning("Bot not initialised — skipping subscription renewal alerts.")
+        return
+
+    now = datetime.now(timezone.utc)
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Tutor).where(
+                Tutor.is_active == True,
+                Tutor.subscription_expires_at.is_not(None),
+            )
+        )
+        tutors = result.scalars().all()
+
+        for tutor in tutors:
+            delta = tutor.subscription_expires_at - now
+            hours_left = delta.total_seconds() / 3600.0
+
+            days_left = None
+            if 48.0 < hours_left <= 72.0:
+                days_left = 3
+            elif 0.0 < hours_left <= 24.0:
+                days_left = 1
+
+            if days_left is not None:
+                days_word = "день" if days_left == 1 else "дня"
+                text = f"⏰ Ваша подписка истекает через {days_left} {days_word}. Пожалуйста, продлите её, чтобы избежать перерывов в расписании."
+                try:
+                    await bot.send_message(
+                        chat_id=tutor.tg_id,
+                        text=text,
+                        parse_mode="HTML",
+                    )
+                    logger.info("Sent subscription warning to tutor tg_id=%d (%d days left)", tutor.tg_id, days_left)
+                except Exception as exc:
+                    logger.error("Failed to send subscription renewal alert to tutor tg_id=%d: %s", tutor.tg_id, exc)
+
+
+# ═════════════════════════════════════════════════════════════════════
 #  Scheduler Setup
 # ═════════════════════════════════════════════════════════════════════
 
@@ -277,7 +328,16 @@ def configure_scheduler() -> None:
         replace_existing=True,
     )
 
+    # Job: Subscription renewal alerts — every 24 hours (daily at 09:00 UTC)
+    scheduler.add_job(
+        subscription_renewal_alert_job,
+        "cron",
+        hour=9,
+        minute=0,
+        id="subscription_renewal_alerts",
+        replace_existing=True,
+    )
+
     logger.info(
-        "Scheduler configured: pre-lesson=every 5m (lead %d min), 24h=every 30m",
-        settings.reminder_minutes_before,
+        "Scheduler configured: pre-lesson=every 5m, 24h=every 30m, sub_alert=daily 09:00 UTC",
     )

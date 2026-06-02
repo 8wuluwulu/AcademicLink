@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     )
     default_tutor_name: str = "Основной репетитор"
 
+    # --- Platform Admin ---
+    admin_tg_id: int | None = PydanticField(
+        default=None,
+        description="Platform admin Telegram ID (for /extend_sub command)",
+    )
+
     # --- Runtime ---
     environment: str = "development"
 

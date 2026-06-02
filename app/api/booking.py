@@ -10,13 +10,14 @@ from datetime import datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import get_session
-from app.db.models import Booking, Tutor
+from app.db.models import Booking, Service, Tutor
 from app.services.booking_service import create_booking_from_web
 
 logger = logging.getLogger(__name__)
@@ -68,10 +69,21 @@ class BookingCreate(BaseModel):
         description="Telegram @username (optional)",
         examples=["johndoe"],
     )
+    telegram_id: int | None = Field(
+        default=None,
+        description="Telegram user ID (optional)",
+        examples=[123456789],
+    )
     payment_method: str = Field(
         default="cash",
-        description="Payment method: cash or transfer",
+        description="Payment method: cash, transfer, or online",
         examples=["cash"],
+    )
+    payment_comment: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Payer verification info for SBP transfers (e.g. sender's name)",
+        examples=["Иванов Иван"],
     )
 
     @field_validator("phone")
@@ -90,8 +102,8 @@ class BookingCreate(BaseModel):
     @classmethod
     def validate_payment_method(cls, v: str) -> str:
         cleaned = v.strip().lower()
-        if cleaned not in ("cash", "transfer"):
-            raise ValueError("Способ оплаты должен быть 'cash' или 'transfer'.")
+        if cleaned not in ("cash", "transfer", "online"):
+            raise ValueError("Способ оплаты должен быть 'cash', 'transfer' или 'online'.")
         return cleaned
 
 
@@ -131,24 +143,48 @@ async def notify_tutor_new_booking(
 
     from app.bot.formatting import fmt_contact_links, fmt_full
 
-    pay_method_label = "💵 Наличные" if booking.payment_method == "cash" else "💳 Перевод на карту"
-
     appt = fmt_full(booking.appointment_time)
     name_display = f"👤 <b>{student_name}</b>"
 
-    text = (
-        f"🔔 <b>Новая запись!</b>\n\n"
-        f"{name_display}\n"
-        f"{fmt_contact_links(student_phone, tg_username)}\n\n"
-        f"📚 {booking.service_type}\n"
-        f"🕒 {appt}\n"
-        f"💰 Оплата: {pay_method_label}"
-    )
+    is_online_payment = booking.payment_method in ("online", "transfer")
 
-    try:
-        await bot.send_message(chat_id=tutor.tg_id, text=text, parse_mode="HTML")
-    except Exception as exc:
-        logger.error("Failed to notify tutor: %s", exc)
+    if is_online_payment:
+        # Fetch service price for display
+        service = await session.get(Service, booking.service_id) if booking.service_id else None
+        price_text = f"{service.price} ₽" if service and service.price else "не указана"
+        pay_comment_line = f"\n👤 Плательщик: <b>{booking.payment_comment}</b>" if booking.payment_comment else ""
+
+        text = (
+            f"💳 <b>Новая заявка с оплатой СБП!</b>\n\n"
+            f"{name_display}\n"
+            f"{fmt_contact_links(student_phone, tg_username)}\n\n"
+            f"📚 {booking.service_type}\n"
+            f"🕒 {appt}\n"
+            f"💰 Сумма: <b>{price_text}</b>{pay_comment_line}\n\n"
+            f"⚠️ <i>Проверьте поступление перевода в вашем банковском приложении!</i>"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🟢 Подтвердить оплату", callback_data=f"confirm_p2p:{booking.id}"),
+            InlineKeyboardButton(text="🔴 Отклонить", callback_data=f"cancel_p2p:{booking.id}"),
+        ]])
+        try:
+            await bot.send_message(chat_id=tutor.tg_id, text=text, parse_mode="HTML", reply_markup=kb)
+        except Exception as exc:
+            logger.error("Failed to notify tutor about P2P booking: %s", exc)
+    else:
+        pay_method_label = "💵 Наличные" if booking.payment_method == "cash" else "💳 Перевод на карту"
+        text = (
+            f"🔔 <b>Новая запись!</b>\n\n"
+            f"{name_display}\n"
+            f"{fmt_contact_links(student_phone, tg_username)}\n\n"
+            f"📚 {booking.service_type}\n"
+            f"🕒 {appt}\n"
+            f"💰 Оплата: {pay_method_label}"
+        )
+        try:
+            await bot.send_message(chat_id=tutor.tg_id, text=text, parse_mode="HTML")
+        except Exception as exc:
+            logger.error("Failed to notify tutor: %s", exc)
 
 
 # ── Router ───────────────────────────────────────────────────────────
@@ -171,7 +207,9 @@ async def create_booking(
             appointment_time=payload.appointment_time,
             tutor_id=payload.tutor_id,
             telegram_username=payload.telegram_username,
+            telegram_id=payload.telegram_id,
             payment_method=payload.payment_method,
+            payment_comment=payload.payment_comment,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

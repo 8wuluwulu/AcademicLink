@@ -155,7 +155,14 @@ app.include_router(api_router)
 
 
 # ── Static Files / Landing Page ──────────────────────────────────────
+import os
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+# Ensure static directories exist
+os.makedirs("static/qrs", exist_ok=True)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/book/{tutor_id}", tags=["Web UI"])

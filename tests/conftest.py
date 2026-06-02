@@ -9,7 +9,7 @@ Shared fixtures for the test suite:
 
 import asyncio
 import os
-from datetime import time, datetime, timezone
+from datetime import time, datetime, timezone, timedelta
 
 # Set environment to testing BEFORE any other imports that might load settings
 os.environ["ENVIRONMENT"] = "testing"
@@ -79,7 +79,13 @@ async def seeded_session(session: AsyncSession):
     - Wednesday (2): 10:00–18:00
     - Friday (4): 08:00–16:00
     """
-    tutor = Tutor(tg_id=123456789, name="Test Tutor", is_active=True)
+    tutor = Tutor(
+        tg_id=123456789,
+        name="Test Tutor",
+        is_active=True,
+        subscription_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+        subscription_status="active",
+    )
     session.add(tutor)
     await session.flush()
 

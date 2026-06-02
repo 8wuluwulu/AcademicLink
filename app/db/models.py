@@ -119,6 +119,58 @@ class Tutor(SQLModel, table=True):
         max_length=255,
         description="Google Calendar ID to sync bookings to",
     )
+    subscription_expires_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        description="Subscription expiration timestamp (UTC)",
+    )
+    subscription_status: str | None = Field(
+        default="trial",
+        max_length=50,
+        description="Subscription status: trial, active, or expired",
+    )
+
+    # ── Tutor Business Card (Landing Page) & SBP Details ─────────────
+    bio: str | None = Field(
+        default=None,
+        sa_type=Text(),
+        description="About the tutor, experience, credentials",
+    )
+    subject: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Subject / specialization (e.g. Mathematics, English)",
+    )
+    avatar_url: str | None = Field(
+        default=None,
+        max_length=512,
+        description="URL of the tutor's photo / avatar",
+    )
+    accent_color: str = Field(
+        default="#4f46e5",
+        max_length=10,
+        description="Hex code of the accent color for landing page custom theme",
+    )
+    sbp_phone: str | None = Field(
+        default=None,
+        max_length=20,
+        description="Phone number registered in SBP for C2C transfers",
+    )
+    sbp_bank: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Name of the preferred bank for SBP transfer",
+    )
+    sbp_qr_url: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Direct image URL of static SBP QR code",
+    )
+    sbp_link: str | None = Field(
+        default=None,
+        max_length=512,
+        description="URL for direct C2C payment/transfer (e.g. Tinkoff/Sberbank pay links)",
+    )
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="tutor")
@@ -266,7 +318,12 @@ class Booking(SQLModel, table=True):
     payment_method: str = Field(
         default="cash",
         max_length=20,
-        description="Payment method: cash or transfer",
+        description="Payment method: cash, transfer, or online",
+    )
+    payment_comment: str | None = Field(
+        default=None,
+        sa_type=Text(),
+        description="Verification metadata from payer (e.g. sender name for SBP transfer)",
     )
     google_event_id: str | None = Field(
         default=None,

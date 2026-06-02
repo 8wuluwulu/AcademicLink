@@ -126,7 +126,9 @@ async def create_booking_from_web(
     appointment_time: datetime,
     tutor_id: int,
     telegram_username: str | None = None,
+    telegram_id: int | None = None,
     payment_method: str = "cash",
+    payment_comment: str | None = None,
 ) -> Booking:
     if appointment_time.tzinfo is None:
         appointment_time = appointment_time.replace(tzinfo=timezone.utc)
@@ -138,7 +140,12 @@ async def create_booking_from_web(
 
     # 2. Resolve Student
     student = None
-    if telegram_username:
+    if telegram_id:
+        stmt = select(Student).where(Student.telegram_id == telegram_id)
+        result = await session.execute(stmt)
+        student = result.scalar_one_or_none()
+
+    if student is None and telegram_username:
         clean_username = telegram_username.lstrip("@")
         stmt = select(Student).where(Student.telegram_username == clean_username)
         result = await session.execute(stmt)
@@ -152,13 +159,14 @@ async def create_booking_from_web(
     if student is None:
         # Generate a unique pseudo-phone number if not provided
         if not phone:
-            uname_part = telegram_username.lstrip("@") if telegram_username else "unknown"
+            uname_part = telegram_username.lstrip("@") if telegram_username else (str(telegram_id) if telegram_id else "unknown")
             phone = f"+999{abs(hash(uname_part)) % 1000000000:09d}"
 
         student = Student(
             full_name=full_name,
             phone=phone,
             telegram_username=telegram_username.lstrip("@") if telegram_username else None,
+            telegram_id=telegram_id,
         )
         session.add(student)
         await session.flush()
@@ -168,11 +176,20 @@ async def create_booking_from_web(
         student.full_name = full_name
         if telegram_username:
             student.telegram_username = telegram_username.lstrip("@")
+        if telegram_id:
+            student.telegram_id = telegram_id
 
     # 3. Resolve Tutor
     tutor = await session.get(Tutor, tutor_id)
     if not tutor or not tutor.is_active:
         raise ValueError("Репетитор не принимает записи.")
+
+    # 3a. Check subscription — expired/unsubscribed tutors cannot accept new bookings
+    sub_expires = tutor.subscription_expires_at
+    if sub_expires and sub_expires.tzinfo is None:
+        sub_expires = sub_expires.replace(tzinfo=timezone.utc)
+    if sub_expires is None or sub_expires < datetime.now(timezone.utc):
+        raise ValueError("Запись временно недоступна. Пожалуйста, свяжитесь с преподавателем напрямую.")
 
     # 4. Validations
     await check_availability(session, tutor_id=tutor_id, appointment_time=appointment_time)
@@ -196,6 +213,7 @@ async def create_booking_from_web(
         status=BookingStatus.PENDING,
         created_at=datetime.now(timezone.utc),
         payment_method=payment_method,
+        payment_comment=payment_comment,
     )
     session.add(booking)
     await session.commit()
@@ -220,6 +238,13 @@ async def get_available_slots(
     
     tutor = await session.get(Tutor, tutor_id)
     if not tutor or not tutor.is_active:
+        return []
+
+    # Check subscription — expired/unsubscribed tutors show no available slots
+    sub_expires = tutor.subscription_expires_at
+    if sub_expires and sub_expires.tzinfo is None:
+        sub_expires = sub_expires.replace(tzinfo=timezone.utc)
+    if sub_expires is None or sub_expires < datetime.now(timezone.utc):
         return []
 
     service = await session.get(Service, service_id)

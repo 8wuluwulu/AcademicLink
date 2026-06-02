@@ -44,6 +44,26 @@ def _auto_migrate_columns(connection) -> None:
             connection.execute(text("ALTER TABLE tutors ADD COLUMN google_token_json TEXT"))
         if 'google_calendar_id' not in tutors_cols:
             connection.execute(text("ALTER TABLE tutors ADD COLUMN google_calendar_id VARCHAR(255) DEFAULT 'primary'"))
+        if 'subscription_expires_at' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN subscription_expires_at TIMESTAMP WITH TIME ZONE"))
+        if 'subscription_status' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN subscription_status VARCHAR(50) DEFAULT 'trial'"))
+        if 'bio' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN bio TEXT"))
+        if 'subject' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN subject VARCHAR(255)"))
+        if 'avatar_url' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN avatar_url VARCHAR(512)"))
+        if 'accent_color' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN accent_color VARCHAR(10) DEFAULT '#4f46e5'"))
+        if 'sbp_phone' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_phone VARCHAR(20)"))
+        if 'sbp_bank' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_bank VARCHAR(100)"))
+        if 'sbp_qr_url' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_qr_url VARCHAR(512)"))
+        if 'sbp_link' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_link VARCHAR(512)"))
             
     # Check bookings columns
     if 'bookings' in inspector.get_table_names():
@@ -52,6 +72,8 @@ def _auto_migrate_columns(connection) -> None:
             connection.execute(text("ALTER TABLE bookings ADD COLUMN payment_method VARCHAR(20) DEFAULT 'cash'"))
         if 'google_event_id' not in bookings_cols:
             connection.execute(text("ALTER TABLE bookings ADD COLUMN google_event_id VARCHAR(255)"))
+        if 'payment_comment' not in bookings_cols:
+            connection.execute(text("ALTER TABLE bookings ADD COLUMN payment_comment TEXT"))
 
 
 async def init_db() -> None:

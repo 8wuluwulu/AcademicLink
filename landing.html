@@ -9,8 +9,10 @@
     <!-- Premium Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
     <style>
         :root {
             --primary: #4f46e5;
@@ -55,8 +57,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         header {
@@ -92,8 +101,8 @@
             -webkit-backdrop-filter: blur(16px);
             border-radius: 24px;
             padding: 36px;
-            box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.06), 
-                        0 0 0 1px rgba(226, 232, 240, 0.8);
+            box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.06),
+                0 0 0 1px rgba(226, 232, 240, 0.8);
         }
 
         .section-title {
@@ -139,7 +148,8 @@
             letter-spacing: 0.2px;
         }
 
-        input, select {
+        input,
+        select {
             width: 100%;
             padding: 14px 18px;
             border: 1px solid var(--border);
@@ -155,7 +165,8 @@
             color: #94a3b8;
         }
 
-        input:focus, select:focus {
+        input:focus,
+        select:focus {
             outline: none;
             border-color: var(--primary);
             background-color: #ffffff;
@@ -311,31 +322,35 @@
             animation: fadeIn 0.3s ease-out;
         }
 
-        .status-success { 
-            background-color: var(--success-bg); 
-            color: #065f46; 
-            border: 1px solid rgba(16, 185, 129, 0.2); 
+        .status-success {
+            background-color: var(--success-bg);
+            color: #065f46;
+            border: 1px solid rgba(16, 185, 129, 0.2);
         }
-        
-        .status-error { 
-            background-color: var(--error-bg); 
-            color: #991b1b; 
-            border: 1px solid rgba(244, 63, 94, 0.2); 
+
+        .status-error {
+            background-color: var(--error-bg);
+            color: #991b1b;
+            border: 1px solid rgba(244, 63, 94, 0.2);
         }
 
         .loader {
-            display: inline-block; 
-            width: 18px; 
+            display: inline-block;
+            width: 18px;
             height: 18px;
             border: 2.5px solid rgba(255, 255, 255, .3);
-            border-radius: 50%; 
+            border-radius: 50%;
             border-top-color: #fff;
             animation: spin 0.8s infinite linear;
-            margin-right: 8px; 
+            margin-right: 8px;
             vertical-align: middle;
         }
-        
-        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
 
         /* Custom Date Picker Styling */
         input[type="date"]::-webkit-calendar-picker-indicator {
@@ -364,6 +379,197 @@
             pointer-events: none;
             font-size: 16px;
         }
+
+        /* Modal Backdrop */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        /* Modal Container */
+        .modal-card {
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 32px;
+            width: 90%;
+            max-width: 440px;
+            box-shadow: 0 30px 60px -15px rgba(15, 23, 42, 0.2);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            transform: scale(0.95);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            text-align: center;
+        }
+
+        .modal-backdrop.show {
+            display: flex;
+        }
+
+        .modal-backdrop.show .modal-card {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            font-family: var(--font-heading);
+            font-size: 20px;
+            font-weight: 750;
+            color: #1e1b4b;
+            margin-bottom: 8px;
+        }
+
+        .modal-amount {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 18px;
+            font-family: var(--font-heading);
+        }
+
+        .sbp-qr-container {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto 20px auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #ffffff;
+            padding: 10px;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+        }
+
+        .sbp-qr-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .sbp-details-box {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            text-align: left;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .sbp-details-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .sbp-details-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .sbp-details-label {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .sbp-details-value {
+            font-weight: 600;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            color: var(--primary);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary-glow);
+        }
+
+        .modal-input-group {
+            text-align: left;
+            margin-bottom: 24px;
+        }
+
+        .modal-input-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 8px;
+        }
+
+        .modal-input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1.5px solid var(--border);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        .modal-input-group input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+
+        .modal-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .modal-btn {
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .modal-btn-confirm {
+            background: var(--primary);
+            color: #ffffff;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .modal-btn-confirm:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 16px var(--primary-glow);
+        }
+
+        .modal-btn-cancel {
+            background: #f1f5f9;
+            color: #475569;
+        }
+
+        .modal-btn-cancel:hover {
+            background: #e2e8f0;
+        }
+
     </style>
 </head>
 
@@ -409,8 +615,8 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="tg-user">Ваш Telegram @username</label>
-                    <input type="text" id="tg-user" placeholder="username" required>
+                    <label for="tg-user">Ваш Telegram @username или телефон</label>
+                    <input type="text" id="tg-user" placeholder="username или +79991234567" required>
                     <div id="tg-linked-badge" class="tg-linked-badge">
                         <span>🛡️ Авторизован через Telegram Web App</span>
                     </div>
@@ -421,7 +627,8 @@
                 <div class="form-group">
                     <div class="pay-methods-grid">
                         <label class="pay-card active" id="pay-cash-label">
-                            <input type="radio" name="pay-method" value="cash" checked onchange="updatePaymentCard(this)">
+                            <input type="radio" name="pay-method" value="cash" checked
+                                onchange="updatePaymentCard(this)">
                             <span class="pay-icon">💵</span>
                             <span>Наличными</span>
                         </label>
@@ -461,14 +668,61 @@
         dateInput.setAttribute('min', today);
         dateInput.value = today;
 
+        let tutorData = null;
+        let tgUsername = null;
+        let tgUserId = null;
+
         // Initialize Telegram WebApp SDK
         const tg = window.Telegram ? window.Telegram.WebApp : null;
         if (tg) {
-            tg.ready();
-            tg.expand();
+            try {
+                tg.ready();
+                tg.expand();
+            } catch (e) {
+                console.error("Error initializing Telegram WebApp:", e);
+            }
         }
 
         async function init() {
+            console.log("Initializing booking page...");
+            console.log("Current URL:", window.location.href);
+
+            // 1. Try reading from URL Query parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramUsername = urlParams.get('tg_username');
+            const paramUserId = urlParams.get('tg_id');
+            console.log("URL params - tg_username:", paramUsername, "tg_id:", paramUserId);
+
+            if (paramUsername && paramUsername !== 'None' && paramUsername !== 'null') {
+                tgUsername = paramUsername;
+            }
+            if (paramUserId && paramUserId !== 'None' && paramUserId !== 'null') {
+                tgUserId = parseInt(paramUserId);
+            }
+
+            // 2. Try reading from Telegram WebApp SDK
+            if (tg) {
+                console.log("Telegram WebApp SDK detected.");
+                console.log("tg.initDataUnsafe:", tg.initDataUnsafe);
+                if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                    const user = tg.initDataUnsafe.user;
+                    console.log("Telegram User details from SDK:", user);
+                    if (user.username) {
+                        tgUsername = user.username;
+                    }
+                    if (user.id) {
+                        tgUserId = user.id;
+                    }
+                    // Pre-populate student name from TG
+                    const nameInput = document.getElementById('full-name');
+                    if (nameInput && !nameInput.value) {
+                        nameInput.value = [user.first_name, user.last_name].filter(Boolean).join(' ');
+                    }
+                }
+            }
+
+            console.log("Final resolved tgUsername:", tgUsername, "tgUserId:", tgUserId);
+
             if (!tutorId || isNaN(tutorId)) {
                 tutorDisplay.textContent = 'Ошибка: Репетитор не найден';
                 tutorDisplay.style.background = '#fef2f2';
@@ -476,29 +730,31 @@
                 return;
             }
 
-            // Check if opened inside Telegram WebApp
-            if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
-                const user = tg.initDataUnsafe.user;
-                if (user.username) {
-                    tgUserInput.value = user.username;
-                    tgUserInput.disabled = true; // Lock field to prevent typos and ensure correct linking
-                    tgLinkedBadge.style.display = 'flex';
-                }
+            // Auto-populate username if found
+            if (tgUsername) {
+                tgUserInput.value = tgUsername;
+                tgUserInput.disabled = true; // Lock field
+                tgLinkedBadge.innerHTML = '<span>🛡️ Авторизован через Telegram</span>';
+                tgLinkedBadge.style.display = 'flex';
+            } else if (tgUserId) {
+                tgLinkedBadge.innerHTML = '<span>🛡️ Подключен через Telegram ID</span>';
+                tgLinkedBadge.style.display = 'flex';
             }
 
             try {
                 // Fetch Tutor Info
                 const tRes = await fetch(`${API_BASE}/tutors/${tutorId}`);
                 if (!tRes.ok) throw new Error();
-                const tutor = await tRes.json();
-                tutorDisplay.textContent = `Репетитор: ${tutor.name}`;
+                tutorData = await tRes.json();
+                
+                tutorDisplay.textContent = 'Репетитор: ' + tutorData.name;
 
                 // Fetch Services
                 const sRes = await fetch(`${API_BASE}/tutors/${tutorId}/services`);
                 const services = await sRes.json();
-                serviceSelect.innerHTML = '<option value="">Выберите учебную услугу...</option>' + 
-                    services.map(s => `<option value="${s.id}">${s.name} (${s.duration} мин) ${s.price ? '— ' + s.price + ' ₽' : ''}</option>`).join('');
-                
+                serviceSelect.innerHTML = '<option value="">Выберите учебную услугу...</option>' +
+                    services.map(s => `<option value="${s.id}" data-price="${s.price || 0}" data-name="${s.name}">${s.name} (${s.duration} мин) ${s.price ? '— ' + s.price + ' ₽' : ''}</option>`).join('');
+
             } catch (err) {
                 tutorDisplay.textContent = 'Ошибка загрузки данных профиля';
                 tutorDisplay.style.background = '#fef2f2';
@@ -517,9 +773,9 @@
             try {
                 const res = await fetch(`${API_BASE}/tutors/${tutorId}/slots?service_id=${serviceId}&date=${date}`);
                 const data = await res.json();
-                
+
                 if (data.available_slots && data.available_slots.length > 0) {
-                    slotsGrid.innerHTML = data.available_slots.map(slot => 
+                    slotsGrid.innerHTML = data.available_slots.map(slot =>
                         `<button type="button" class="slot-btn" onclick="selectSlot(this, '${slot}')">${slot}</button>`
                     ).join('');
                 } else {
@@ -545,24 +801,44 @@
         serviceSelect.addEventListener('change', fetchSlots);
         dateInput.addEventListener('change', fetchSlots);
 
-        document.getElementById('booking-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const time = selectedTimeInput.value;
-            if (!time) { alert('Пожалуйста, выберите доступное время занятия!'); return; }
+        let pendingPayload = null;
 
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="loader"></span> Оформление записи...';
+        window.copyText = (text, btn) => {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = 'Скопировано!';
+                setTimeout(() => btn.textContent = originalText, 1500);
+            }).catch(err => {
+                alert('Не удалось скопировать. Скопируйте вручную: ' + text);
+            });
+        };
 
-            const payload = {
-                full_name: document.getElementById('full-name').value,
-                phone: null, // Phone number is completely optional now and resolved via telegram_username!
-                service_id: parseInt(serviceSelect.value),
-                appointment_time: new Date(`${dateInput.value}T${time}`).toISOString(),
-                tutor_id: parseInt(tutorId),
-                telegram_username: tgUserInput.value || null,
-                payment_method: document.querySelector('input[name="pay-method"]:checked').value
-            };
+        window.closePaymentModal = () => {
+            document.getElementById('sbp-modal').classList.remove('show');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Подтвердить и записаться';
+            pendingPayload = null;
+        };
 
+        window.confirmPaymentAndSubmit = async () => {
+            const payerNameInput = document.getElementById('payer-name');
+            const payerName = payerNameInput.value.trim();
+            if (!payerName) {
+                alert('Пожалуйста, введите имя отправителя перевода для сверки!');
+                payerNameInput.focus();
+                return;
+            }
+
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<span class="loader"></span> Отправка...';
+
+            pendingPayload.payment_comment = payerName;
+
+            await submitBookingPayload(pendingPayload);
+        };
+
+        async function submitBookingPayload(payload) {
             try {
                 const res = await fetch(`${API_BASE}/bookings/`, {
                     method: 'POST',
@@ -570,9 +846,14 @@
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    showStatus('✅ Вы успешно записаны! Занятие подтверждено.', 'success');
+                    showStatus('✅ Вы успешно записаны! Заявка отправлена на подтверждение.', 'success');
                     document.getElementById('booking-form').reset();
+                    const payerNameInput = document.getElementById('payer-name');
+                    if (payerNameInput) payerNameInput.value = '';
                     fetchSlots();
+
+                    // Close modal if open
+                    document.getElementById('sbp-modal').classList.remove('show');
 
                     // If opened inside Telegram WebApp, automatically close the window
                     if (tg) {
@@ -582,13 +863,116 @@
                     }
                 } else {
                     const data = await res.json();
+                    alert('❌ Ошибка записи: ' + (data.detail || 'неизвестно'));
                     showStatus('❌ Ошибка записи: ' + (data.detail || 'неизвестно'), 'error');
                 }
             } catch (err) {
+                alert('❌ Сетевая ошибка при отправке запроса');
                 showStatus('❌ Сетевая ошибка при отправке запроса', 'error');
             } finally {
+                const confirmBtn = document.getElementById('modal-confirm-btn');
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.innerHTML = 'Я оплатил(а)';
+                }
+                
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = 'Подтвердить и записаться';
+                pendingPayload = null;
+            }
+        }
+
+        document.getElementById('booking-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const time = selectedTimeInput.value;
+            if (!time) { alert('Пожалуйста, выберите доступное время занятия!'); return; }
+
+            const serviceOpt = serviceSelect.options[serviceSelect.selectedIndex];
+            const serviceName = serviceOpt.getAttribute('data-name') || '';
+            const servicePrice = parseInt(serviceOpt.getAttribute('data-price') || '0');
+
+            const payload = {
+                full_name: document.getElementById('full-name').value,
+                phone: null,
+                service_id: parseInt(serviceSelect.value),
+                appointment_time: new Date(`${dateInput.value}T${time}`).toISOString(),
+                tutor_id: parseInt(tutorId),
+                telegram_username: tgUsername || tgUserInput.value || null,
+                telegram_id: tgUserId || null,
+                payment_method: document.querySelector('input[name="pay-method"]:checked').value,
+                payment_comment: null
+            };
+
+            // Check if SBP transfer payment method is chosen and price > 0
+            if (payload.payment_method === 'transfer' && servicePrice > 0 && tutorData) {
+                pendingPayload = payload;
+                
+                // Populate SBP modal details
+                document.getElementById('modal-service-name').textContent = serviceName;
+                document.getElementById('modal-amount-display').textContent = `${servicePrice} ₽`;
+                document.getElementById('modal-tutor-name').textContent = tutorData.name;
+                
+                // Handle SBP Phone
+                const sbpPhoneVal = tutorData.sbp_phone || '';
+                const phoneRow = document.getElementById('modal-phone-row');
+                if (sbpPhoneVal) {
+                    document.getElementById('modal-sbp-phone').textContent = sbpPhoneVal;
+                    phoneRow.style.display = 'flex';
+                } else {
+                    phoneRow.style.display = 'none';
+                }
+
+                // Handle SBP Bank
+                const sbpBankVal = tutorData.sbp_bank || '';
+                const bankRow = document.getElementById('modal-bank-row');
+                if (sbpBankVal) {
+                    document.getElementById('modal-sbp-bank').textContent = sbpBankVal;
+                    bankRow.style.display = 'flex';
+                } else {
+                    bankRow.style.display = 'none';
+                }
+
+                // Handle SBP QR Code generation/display
+                const qrContainer = document.getElementById('modal-qr-container');
+                let qrSourceUrl = null;
+                
+                if (tutorData.sbp_qr_url) {
+                    // Use uploaded static QR code image
+                    qrSourceUrl = tutorData.sbp_qr_url;
+                } else if (tutorData.sbp_link) {
+                    // Generate QR code for custom payment link
+                    qrSourceUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(tutorData.sbp_link)}`;
+                } else if (sbpPhoneVal) {
+                    // If no explicit link/image, but phone is present:
+                    // If bank is Tinkoff, generate direct Tinkoff RM link.
+                    const cleanPhone = sbpPhoneVal.replace(/[^0-9]/g, '');
+                    const sbpBankLower = (sbpBankVal || '').toLowerCase();
+                    const isTinkoff = sbpBankLower.includes('тинькофф') || sbpBankLower.includes('tinkoff') || sbpBankLower.includes('т-банк') || sbpBankLower.includes('т банк');
+                    
+                    if (isTinkoff && cleanPhone) {
+                        const tLink = `https://www.tinkoff.ru/rm/${cleanPhone}/`;
+                        qrSourceUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(tLink)}`;
+                    } else {
+                        // Fallback to text QR or placeholder
+                        const infoText = `Перевод ${servicePrice} р. по СБП в ${sbpBankVal} на номер ${sbpPhoneVal}`;
+                        qrSourceUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(infoText)}`;
+                    }
+                }
+
+                if (qrSourceUrl) {
+                    qrContainer.innerHTML = `<img src="${qrSourceUrl}" alt="QR СБП">`;
+                    qrContainer.style.display = 'flex';
+                } else {
+                    qrContainer.style.display = 'none';
+                }
+
+                // Show modal
+                document.getElementById('sbp-modal').classList.add('show');
+            } else {
+                // If cash or price is 0, submit directly
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="loader"></span> Оформление записи...';
+                await submitBookingPayload(payload);
             }
         });
 
@@ -600,5 +984,47 @@
 
         init();
     </script>
+
+    <!-- SBP Payment Modal -->
+    <div id="sbp-modal" class="modal-backdrop">
+        <div class="modal-card">
+            <div class="modal-header">Оплата перевода СБП</div>
+            <div id="modal-service-name" style="font-size: 14px; color: var(--text-muted); margin-bottom: 6px;"></div>
+            <div class="modal-amount" id="modal-amount-display">0 ₽</div>
+
+            <div class="sbp-qr-container" id="modal-qr-container">
+                <!-- QR code image will be rendered here -->
+            </div>
+
+            <div class="sbp-details-box">
+                <div class="sbp-details-row">
+                    <span class="sbp-details-label">Получатель</span>
+                    <span class="sbp-details-value" id="modal-tutor-name">Имя</span>
+                </div>
+                <div class="sbp-details-row" id="modal-phone-row">
+                    <span class="sbp-details-label">Телефон СБП</span>
+                    <span class="sbp-details-value">
+                        <span id="modal-sbp-phone">+7...</span>
+                        <button type="button" class="copy-btn" onclick="copyText(document.getElementById('modal-sbp-phone').textContent, this)">Копировать</button>
+                    </span>
+                </div>
+                <div class="sbp-details-row" id="modal-bank-row">
+                    <span class="sbp-details-label">Банк</span>
+                    <span class="sbp-details-value" id="modal-sbp-bank">Банк</span>
+                </div>
+            </div>
+
+            <div class="modal-input-group">
+                <label for="payer-name">Имя отправителя перевода для проверки</label>
+                <input type="text" id="payer-name" placeholder="Иван И." required>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="modal-btn modal-btn-cancel" onclick="closePaymentModal()">Назад к выбору</button>
+                <button type="button" class="modal-btn modal-btn-confirm" id="modal-confirm-btn" onclick="confirmPaymentAndSubmit()">Я оплатил(а)</button>
+            </div>
+        </div>
+    </div>
 </body>
+
 </html>

@@ -66,7 +66,13 @@ async def test_session_factory(test_engine):
 async def seed_db(test_session_factory):
     """Seed tutor + availability slot for a valid Monday booking."""
     async with test_session_factory() as session:
-        tutor = Tutor(tg_id=111222333, name="API Tutor", is_active=True)
+        tutor = Tutor(
+            tg_id=111222333,
+            name="API Tutor",
+            is_active=True,
+            subscription_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            subscription_status="active",
+        )
         session.add(tutor)
         await session.flush()
 

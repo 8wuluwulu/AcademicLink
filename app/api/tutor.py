@@ -28,6 +28,14 @@ class TutorRead(BaseModel):
     name: str
     is_active: bool
     meeting_link: str | None = None
+    bio: str | None = None
+    subject: str | None = None
+    avatar_url: str | None = None
+    accent_color: str = "#4f46e5"
+    sbp_phone: str | None = None
+    sbp_bank: str | None = None
+    sbp_qr_url: str | None = None
+    sbp_link: str | None = None
 
     model_config = {"from_attributes": True}
 
