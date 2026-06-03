@@ -95,6 +95,66 @@
             border: 1px solid rgba(79, 70, 229, 0.1);
         }
 
+        .tutor-select-container {
+            margin-top: 12px;
+            display: none;
+            justify-content: center;
+        }
+
+        .select-wrapper {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .tutor-select-dropdown {
+            font-family: var(--font-main);
+            font-size: 15px;
+            font-weight: 600;
+            background: #ffffff;
+            color: var(--text-main);
+            padding: 8px 36px 8px 18px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .select-wrapper::after {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-right: 2px solid var(--text-muted);
+            border-bottom: 2px solid var(--text-muted);
+            transform: rotate(45deg);
+            position: absolute;
+            right: 18px;
+            pointer-events: none;
+            opacity: 0.8;
+            margin-top: -3px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .tutor-select-dropdown:hover {
+            border-color: var(--primary);
+            box-shadow: 0 6px 16px rgba(79, 70, 229, 0.08);
+            transform: translateY(-1px);
+        }
+
+        .select-wrapper:hover::after {
+            border-color: var(--primary);
+        }
+
+        .tutor-select-dropdown:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
         .card {
             background: var(--card-bg);
             backdrop-filter: blur(16px);
@@ -578,6 +638,13 @@
         <header>
             <h1>AcademicLink</h1>
             <div id="tutor-display" class="tutor-name">Загрузка профиля репетитора...</div>
+            <div id="tutor-select-container" class="tutor-select-container">
+                <div class="select-wrapper">
+                    <select id="tutor-select" class="tutor-select-dropdown">
+                        <!-- Populated dynamically if student has multiple tutors -->
+                    </select>
+                </div>
+            </div>
         </header>
 
         <div class="card">
@@ -615,8 +682,13 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="tg-user">Ваш Telegram @username или телефон</label>
-                    <input type="text" id="tg-user" placeholder="username или +79991234567" required>
+                    <label for="phone">Номер телефона</label>
+                    <input type="tel" id="phone" placeholder="+7 (999) 123-45-67" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="tg-user">Ваш Telegram @username (необязательно)</label>
+                    <input type="text" id="tg-user" placeholder="username">
                     <div id="tg-linked-badge" class="tg-linked-badge">
                         <span>🛡️ Авторизован через Telegram Web App</span>
                     </div>
@@ -650,7 +722,7 @@
     <script>
         // Extract tutor_id from URL path: /book/123
         const pathParts = window.location.pathname.split('/');
-        const tutorId = pathParts[pathParts.length - 1];
+        let tutorId = pathParts[pathParts.length - 1];
 
         const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000/api/v1' : '/api/v1';
 
@@ -680,6 +752,42 @@
                 tg.expand();
             } catch (e) {
                 console.error("Error initializing Telegram WebApp:", e);
+            }
+        }
+
+        async function loadTutorData(id) {
+            try {
+                // Fetch Tutor Info
+                const tRes = await fetch(`${API_BASE}/tutors/${id}`);
+                if (!tRes.ok) throw new Error();
+                tutorData = await tRes.json();
+                
+                tutorDisplay.textContent = 'Репетитор: ' + tutorData.name;
+
+                // Dynamically update primary brand colors matching tutor configuration
+                if (tutorData.accent_color) {
+                    document.documentElement.style.setProperty('--primary', tutorData.accent_color);
+                    document.documentElement.style.setProperty('--primary-glow', tutorData.accent_color + '26');
+                }
+
+                // Fetch Services
+                const sRes = await fetch(`${API_BASE}/tutors/${id}/services`);
+                const services = await sRes.json();
+                serviceSelect.innerHTML = '<option value="">Выберите учебную услугу...</option>' +
+                    services.map(s => `<option value="${s.id}" data-price="${s.price || 0}" data-name="${s.name}">${s.name} (${s.duration} мин) ${s.price ? '— ' + s.price + ' ₽' : ''}</option>`).join('');
+
+                // Clear previous slot selections
+                slotsGrid.innerHTML = '<div class="no-slots">Выберите услугу для просмотра доступного времени</div>';
+                selectedTimeInput.value = '';
+                submitBtn.disabled = true;
+
+                // Trigger slot refetch if date/service are selected
+                fetchSlots();
+            } catch (err) {
+                console.error("Error loading tutor data:", err);
+                tutorDisplay.textContent = 'Ошибка загрузки данных профиля';
+                tutorDisplay.style.background = '#fef2f2';
+                tutorDisplay.style.color = '#ef4444';
             }
         }
 
@@ -721,6 +829,15 @@
                 }
             }
 
+            // 3. Fallback to localStorage if still not found
+            if (!tgUserId) {
+                const cachedId = localStorage.getItem('al_telegram_id');
+                if (cachedId) tgUserId = parseInt(cachedId);
+            }
+            if (!tgUsername) {
+                tgUsername = localStorage.getItem('al_telegram_username');
+            }
+
             console.log("Final resolved tgUsername:", tgUsername, "tgUserId:", tgUserId);
 
             if (!tutorId || isNaN(tutorId)) {
@@ -741,25 +858,109 @@
                 tgLinkedBadge.style.display = 'flex';
             }
 
-            try {
-                // Fetch Tutor Info
-                const tRes = await fetch(`${API_BASE}/tutors/${tutorId}`);
-                if (!tRes.ok) throw new Error();
-                tutorData = await tRes.json();
-                
-                tutorDisplay.textContent = 'Репетитор: ' + tutorData.name;
+            // Load initial tutor details and services
+            await loadTutorData(tutorId);
 
-                // Fetch Services
-                const sRes = await fetch(`${API_BASE}/tutors/${tutorId}/services`);
-                const services = await sRes.json();
-                serviceSelect.innerHTML = '<option value="">Выберите учебную услугу...</option>' +
-                    services.map(s => `<option value="${s.id}" data-price="${s.price || 0}" data-name="${s.name}">${s.name} (${s.duration} мин) ${s.price ? '— ' + s.price + ' ₽' : ''}</option>`).join('');
-
-            } catch (err) {
-                tutorDisplay.textContent = 'Ошибка загрузки данных профиля';
-                tutorDisplay.style.background = '#fef2f2';
-                tutorDisplay.style.color = '#ef4444';
+            // Fetch other tutors associated with the student to render dropdown
+            if (tgUserId) {
+                fetchTutors('telegram_id=' + tgUserId);
             }
+
+            // Add change listener to phone input to fetch tutors by phone
+            const phoneInput = document.getElementById('phone');
+            if (phoneInput) {
+                phoneInput.addEventListener('change', () => {
+                    const cleanPhone = phoneInput.value.replace(/[^0-9]/g, '');
+                    if (cleanPhone.length >= 10) {
+                        fetchTutors('phone=' + cleanPhone);
+                    }
+                });
+            }
+
+            // Load saved contacts from localStorage (populates phone and fetches tutors)
+            loadSavedStudentContacts();
+
+            // Set up date/service change listeners once
+            serviceSelect.addEventListener('change', fetchSlots);
+            dateInput.addEventListener('change', fetchSlots);
+        }
+
+        function setupTutorsDropdown(tutorsList) {
+            const container = document.getElementById('tutor-select-container');
+            const select = document.getElementById('tutor-select');
+            
+            tutorDisplay.style.display = 'none';
+            container.style.display = 'flex';
+            
+            select.innerHTML = tutorsList.map(t => 
+                `<option value="${t.id}" ${parseInt(t.id) === parseInt(tutorId) ? 'selected' : ''}>${t.name}</option>`
+            ).join('');
+            
+            select.onchange = async (e) => {
+                const newTutorId = e.target.value;
+                tutorId = newTutorId;
+                
+                // Update URL path using history.pushState so that refresh/bookmark works
+                const newPath = `/book/${newTutorId}`;
+                const newUrl = `${window.location.protocol}//${window.location.host}${newPath}${window.location.search}`;
+                window.history.pushState({ path: newUrl }, '', newUrl);
+                
+                // Fetch the new tutor's details and services in-place
+                await loadTutorData(newTutorId);
+            };
+        }
+
+        let tutorsLoaded = false;
+        async function fetchTutors(query) {
+            if (tutorsLoaded) return;
+            try {
+                const tutorsRes = await fetch(`${API_BASE}/tutors/by-student?${query}`);
+                if (tutorsRes.ok) {
+                    const tutorsList = await tutorsRes.json();
+                    const hasCurrent = tutorsList.some(t => parseInt(t.id) === parseInt(tutorId));
+                    let combinedList = [...tutorsList];
+                    if (!hasCurrent && tutorData) {
+                        combinedList.push(tutorData);
+                    }
+                    if (combinedList.length > 1) {
+                        setupTutorsDropdown(combinedList);
+                        tutorsLoaded = true;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading tutors list:", e);
+            }
+        }
+
+        function loadSavedStudentContacts() {
+            try {
+                const savedName = localStorage.getItem('al_full_name');
+                const savedPhone = localStorage.getItem('al_phone');
+                
+                if (savedName) {
+                    const nameInput = document.getElementById('full-name');
+                    if (nameInput && !nameInput.value) {
+                        nameInput.value = savedName;
+                    }
+                }
+                
+                if (savedPhone) {
+                    const phoneInput = document.getElementById('phone');
+                    if (phoneInput && !phoneInput.value) {
+                        phoneInput.value = formatPhone(savedPhone);
+                    }
+                    fetchTutors('phone=' + savedPhone);
+                }
+            } catch (e) {
+                console.error("Error reading from localStorage:", e);
+            }
+        }
+
+        function formatPhone(digits) {
+            if (digits.startsWith('7') && digits.length === 11) {
+                return `+7 (${digits.slice(1,4)}) ${digits.slice(4,7)}-${digits.slice(7,9)}-${digits.slice(9,11)}`;
+            }
+            return '+' + digits;
         }
 
         async function fetchSlots() {
@@ -769,6 +970,7 @@
 
             slotsGrid.innerHTML = '<div class="no-slots"><span class="loader" style="border-top-color: var(--primary);"></span> Поиск свободных окон...</div>';
             selectedTimeInput.value = '';
+            submitBtn.disabled = true;
 
             try {
                 const res = await fetch(`${API_BASE}/tutors/${tutorId}/slots?service_id=${serviceId}&date=${date}`);
@@ -790,6 +992,7 @@
             document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
             btn.classList.add('selected');
             selectedTimeInput.value = time;
+            submitBtn.disabled = false;
         };
 
         window.updatePaymentCard = (radio) => {
@@ -847,6 +1050,23 @@
                 });
                 if (res.ok) {
                     showStatus('✅ Вы успешно записаны! Заявка отправлена на подтверждение.', 'success');
+                    
+                    try {
+                        localStorage.setItem('al_full_name', payload.full_name);
+                        const cleanPhone = (payload.phone || '').replace(/[^0-9]/g, '');
+                        if (cleanPhone) {
+                            localStorage.setItem('al_phone', cleanPhone);
+                        }
+                        if (payload.telegram_id) {
+                            localStorage.setItem('al_telegram_id', payload.telegram_id);
+                        }
+                        if (payload.telegram_username) {
+                            localStorage.setItem('al_telegram_username', payload.telegram_username);
+                        }
+                    } catch (e) {
+                        console.error("Error saving to localStorage:", e);
+                    }
+
                     document.getElementById('booking-form').reset();
                     const payerNameInput = document.getElementById('payer-name');
                     if (payerNameInput) payerNameInput.value = '';
@@ -863,8 +1083,21 @@
                     }
                 } else {
                     const data = await res.json();
-                    alert('❌ Ошибка записи: ' + (data.detail || 'неизвестно'));
-                    showStatus('❌ Ошибка записи: ' + (data.detail || 'неизвестно'), 'error');
+                    let errorMsg = 'неизвестно';
+                    if (data && data.detail) {
+                        if (typeof data.detail === 'string') {
+                            errorMsg = data.detail;
+                        } else if (Array.isArray(data.detail)) {
+                            errorMsg = data.detail.map(err => {
+                                const field = err.loc ? err.loc[err.loc.length - 1] : 'поле';
+                                return `${field}: ${err.msg}`;
+                            }).join(', ');
+                        } else if (typeof data.detail === 'object') {
+                            errorMsg = JSON.stringify(data.detail);
+                        }
+                    }
+                    alert('❌ Ошибка записи: ' + errorMsg);
+                    showStatus('❌ Ошибка записи: ' + errorMsg, 'error');
                 }
             } catch (err) {
                 alert('❌ Сетевая ошибка при отправке запроса');
@@ -891,13 +1124,27 @@
             const serviceName = serviceOpt.getAttribute('data-name') || '';
             const servicePrice = parseInt(serviceOpt.getAttribute('data-price') || '0');
 
+            // Clean phone number format for API regex matching
+            let rawPhone = document.getElementById('phone').value.trim();
+            let digits = rawPhone.replace(/\D/g, '');
+            if (digits.length === 11 && digits.startsWith('8')) {
+                digits = '7' + digits.slice(1);
+            } else if (digits.length === 10) {
+                digits = '7' + digits;
+            }
+            const cleanPhone = digits ? '+' + digits : '';
+
+            // Clean Telegram username format
+            let rawUsername = (tgUsername || tgUserInput.value || '').trim();
+            let formattedUsername = rawUsername.replace(/^@/, '') || null;
+
             const payload = {
-                full_name: document.getElementById('full-name').value,
-                phone: null,
+                full_name: document.getElementById('full-name').value.trim(),
+                phone: cleanPhone,
                 service_id: parseInt(serviceSelect.value),
                 appointment_time: new Date(`${dateInput.value}T${time}`).toISOString(),
                 tutor_id: parseInt(tutorId),
-                telegram_username: tgUsername || tgUserInput.value || null,
+                telegram_username: formattedUsername,
                 telegram_id: tgUserId || null,
                 payment_method: document.querySelector('input[name="pay-method"]:checked').value,
                 payment_comment: null

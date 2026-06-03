@@ -75,6 +75,52 @@ def _auto_migrate_columns(connection) -> None:
         if 'payment_comment' not in bookings_cols:
             connection.execute(text("ALTER TABLE bookings ADD COLUMN payment_comment TEXT"))
 
+    # Check students columns
+    if 'students' in inspector.get_table_names():
+        students_cols = [c['name'] for c in inspector.get_columns('students')]
+        if 'tutor_id' not in students_cols:
+            # 1. Add tutor_id column (initially nullable to allow creation)
+            connection.execute(text("ALTER TABLE students ADD COLUMN tutor_id INTEGER"))
+            
+            # 2. Seed tutor_id for existing students (associate with the first tutor)
+            connection.execute(text(
+                "UPDATE students SET tutor_id = (SELECT id FROM tutors LIMIT 1) WHERE tutor_id IS NULL"
+            ))
+            
+            # Make tutor_id NOT NULL and add foreign key constraint
+            connection.execute(text(
+                "ALTER TABLE students ALTER COLUMN tutor_id SET NOT NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE students ADD CONSTRAINT fk_students_tutor_id FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE"
+            ))
+            
+            # 3. Drop existing global unique constraints and unique indexes
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_phone_key"))
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_telegram_id_key"))
+            connection.execute(text("DROP INDEX IF EXISTS ix_students_phone"))
+            connection.execute(text("DROP INDEX IF EXISTS ix_students_telegram_id"))
+            
+            # Create non-unique indexes for fast lookups
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_students_phone ON students (phone)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_students_telegram_id ON students (telegram_id)"))
+            
+            # 4. Add composite uniqueness constraints
+            connection.execute(text(
+                "ALTER TABLE students ADD CONSTRAINT uq_students_tutor_phone UNIQUE (tutor_id, phone)"
+            ))
+            connection.execute(text(
+                "ALTER TABLE students ADD CONSTRAINT uq_students_tutor_telegram_id UNIQUE (tutor_id, telegram_id)"
+            ))
+
+        # Always check and repair unique indexes to be non-unique if they exist
+        indexes = inspector.get_indexes('students')
+        for index in indexes:
+            if index['name'] in ['ix_students_phone', 'ix_students_telegram_id'] and index['unique']:
+                connection.execute(text(f"DROP INDEX IF EXISTS {index['name']}"))
+                col_name = 'phone' if index['name'] == 'ix_students_phone' else 'telegram_id'
+                connection.execute(text(f"CREATE INDEX IF NOT EXISTS {index['name']} ON students ({col_name})"))
+
 
 async def init_db() -> None:
     """

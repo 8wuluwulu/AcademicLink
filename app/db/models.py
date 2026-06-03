@@ -10,7 +10,7 @@ from datetime import datetime, time, timezone
 from typing import Optional
 
 from sqlalchemy import BigInteger, DateTime, Text, Time
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 
 
 # ── Enums ────────────────────────────────────────────────────────────
@@ -30,18 +30,26 @@ class Student(SQLModel, table=True):
 
     __tablename__ = "students"
 
+    __table_args__ = (
+        UniqueConstraint("tutor_id", "phone", name="uq_students_tutor_phone"),
+        UniqueConstraint("tutor_id", "telegram_id", name="uq_students_tutor_telegram_id"),
+    )
+
     id: int | None = Field(default=None, primary_key=True)
+    tutor_id: int = Field(
+        foreign_key="tutors.id",
+        index=True,
+        description="The tutor this student is associated with",
+    )
     full_name: str = Field(max_length=255, description="Student's full name")
     phone: str = Field(
         max_length=20,
-        unique=True,
         index=True,
-        description="Contact phone number (unique)",
+        description="Contact phone number",
     )
     telegram_id: int | None = Field(
         default=None,
         sa_type=BigInteger(),
-        unique=True,
         index=True,
         description="Telegram user ID (optional)",
     )
@@ -70,9 +78,10 @@ class Student(SQLModel, table=True):
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="student")
+    tutor: Optional["Tutor"] = Relationship(back_populates="students")
 
     def __repr__(self) -> str:
-        return f"<Student id={self.id} name={self.full_name!r}>"
+        return f"<Student id={self.id} name={self.full_name!r} tutor={self.tutor_id}>"
 
 
 # ── Tutor ────────────────────────────────────────────────────────────
@@ -178,6 +187,7 @@ class Tutor(SQLModel, table=True):
         back_populates="tutor",
     )
     services: list["Service"] = Relationship(back_populates="tutor")
+    students: list["Student"] = Relationship(back_populates="tutor")
 
     def __repr__(self) -> str:
         return f"<Tutor id={self.id} name={self.name!r} active={self.is_active}>"

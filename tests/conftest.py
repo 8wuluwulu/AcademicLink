@@ -103,6 +103,7 @@ async def seeded_session(session: AsyncSession):
     await session.flush()
 
     student = Student(
+        tutor_id=tutor.id,
         full_name="Test Student",
         phone="+998901234567",
         telegram_id=987654321,

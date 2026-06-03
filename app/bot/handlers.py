@@ -122,12 +122,17 @@ async def _get_tutor(tg_id: int, session) -> Tutor | None:
 
 
 def build_student_menu(
-    tutor_id: int | None,
+    tutor_ids: int | list[int] | None,
     tg_username: str | None = None,
     tg_id: int | None = None,
 ) -> ReplyKeyboardMarkup:
+    if isinstance(tutor_ids, int):
+        tutor_ids = [tutor_ids]
+    elif tutor_ids is None:
+        tutor_ids = []
+
     keyboard_buttons = []
-    if tutor_id:
+    if tutor_ids:
         from app.core.config import settings
         from urllib.parse import urlencode
         
@@ -138,10 +143,11 @@ def build_student_menu(
             params["tg_id"] = str(tg_id)
             
         query_str = f"?{urlencode(params)}" if params else ""
-        web_app_url = f"{settings.web_url}/book/{tutor_id}{query_str}"
+        web_app_url = f"{settings.web_url}/book/{tutor_ids[0]}{query_str}"
         keyboard_buttons.append(
             KeyboardButton(text="📅 Записаться", web_app=WebAppInfo(url=web_app_url))
         )
+        
     keyboard_buttons.append(KeyboardButton(text="🗂 Мои записи"))
     return ReplyKeyboardMarkup(
         keyboard=[keyboard_buttons],
@@ -220,17 +226,12 @@ router.message.outer_middleware(TutorMessageMiddleware())
 async def _handle_non_tutor(message: Message, session) -> None:
     """Handles messages from non-tutors gracefully by resetting their keyboard or showing onboarding."""
     tg_id = message.from_user.id
-    student_stmt = select(Student).where(Student.telegram_id == tg_id)
+    student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
     student_res = await session.execute(student_stmt)
-    linked_student = student_res.scalar_one_or_none()
-    if linked_student:
-        booking_stmt = select(Booking.tutor_id).where(Booking.student_id == linked_student.id).limit(1)
-        booking_res = await session.execute(booking_stmt)
-        tutor_id = booking_res.scalar_one_or_none()
-        if tutor_id is None:
-            tutor_res = await session.execute(select(Tutor.id).limit(1))
-            tutor_id = tutor_res.scalar_one_or_none()
-        reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
+    tutor_ids = list(student_res.scalars().all())
+    
+    if tutor_ids:
+        reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
         await message.answer(
             "⚠️ <b>Этот раздел доступен только репетиторам.</b>\n\n"
             "Вы зарегистрированы как ученик. Используйте кнопки меню ниже для управления вашими записями.",
@@ -362,19 +363,14 @@ async def _send_dashboard(message: Message) -> None:
             return
 
         # ── 1.5. Handle Already Linked Student ───────────────────────
-        student_stmt = select(Student).where(Student.telegram_id == tg_id)
+        student_stmt = select(Student).where(Student.telegram_id == tg_id).limit(1)
         student_res = await session.execute(student_stmt)
         linked_student = student_res.scalar_one_or_none()
-        if linked_student:
-            # Fetch tutor ID for WebApp booking button
-            booking_stmt = select(Booking.tutor_id).where(Booking.student_id == linked_student.id).limit(1)
-            booking_res = await session.execute(booking_stmt)
-            tutor_id = booking_res.scalar_one_or_none()
-            if tutor_id is None:
-                tutor_res = await session.execute(select(Tutor.id).limit(1))
-                tutor_id = tutor_res.scalar_one_or_none()
-
-            reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
+        student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+        student_res = await session.execute(student_stmt)
+        tutor_ids = list(student_res.scalars().all())
+        if tutor_ids:
+            reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
 
             await message.answer(
                 f"👋 Рады видеть вас снова, <b>{linked_student.full_name}</b>!\n\n"
@@ -393,24 +389,20 @@ async def _send_dashboard(message: Message) -> None:
                 Student.telegram_id.is_(None)
             )
             result = await session.execute(stmt)
-            student = result.scalar_one_or_none()
+            unlinked_students = result.scalars().all()
 
-            if student:
-                student.telegram_id = tg_id
+            if unlinked_students:
+                for s in unlinked_students:
+                    s.telegram_id = tg_id
                 await session.commit()
 
-                # Fetch tutor ID for WebApp booking button
-                booking_stmt = select(Booking.tutor_id).where(Booking.student_id == student.id).limit(1)
-                booking_res = await session.execute(booking_stmt)
-                tutor_id = booking_res.scalar_one_or_none()
-                if tutor_id is None:
-                    tutor_res = await session.execute(select(Tutor.id).limit(1))
-                    tutor_id = tutor_res.scalar_one_or_none()
-
-                reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
+                student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+                student_res = await session.execute(student_stmt)
+                tutor_ids = list(student_res.scalars().all())
+                reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
 
                 await message.answer(
-                    f"👋 Привет, <b>{student.full_name}</b>!\n\n"
+                    f"👋 Привет, <b>{unlinked_students[0].full_name}</b>!\n\n"
                     f"Я — бот системы <b>AcademicLink</b>. Теперь вы будете получать "
                     f"уведомления и напоминания о ваших занятиях прямо здесь.\n\n"
                     f"✅ Ваш профиль успешно привязан.\n"
@@ -523,7 +515,10 @@ async def start_student_registration(message: Message, state: FSMContext, tutor_
     async with async_session_factory() as session:
         # Prevent tutor from registering as their own student
         tutor = await session.get(Tutor, tutor_id)
-        if tutor and tutor.tg_id == tg_id:
+        if not tutor:
+            await message.answer("❌ <b>Преподаватель не найден.</b>", parse_mode="HTML")
+            return
+        if tutor.tg_id == tg_id:
             await message.answer(
                 "⚠️ <b>Вы перешли по собственной ссылке для записи учеников!</b>\n\n"
                 "Бот не может зарегистрировать вас как вашего собственного ученика.\n"
@@ -532,14 +527,47 @@ async def start_student_registration(message: Message, state: FSMContext, tutor_
             )
             return
 
-        # Check if already registered student
+        # Check if already registered student for this specific tutor
+        stmt = select(Student).where(Student.telegram_id == tg_id, Student.tutor_id == tutor_id)
+        res = await session.execute(stmt)
+        student_current = res.scalar_one_or_none()
+        
+        if student_current:
+            # Student is already registered with this specific tutor! Just show the welcome dashboard
+            await _send_dashboard(message)
+            return
+
+        # Check if registered with ANY OTHER tutor
         stmt = select(Student).where(Student.telegram_id == tg_id)
         res = await session.execute(stmt)
-        student = res.scalar_one_or_none()
+        students_all = res.scalars().all()
         
-        if student:
-            # Student is already registered! Just show the welcome dashboard
-            await _send_dashboard(message)
+        if students_all:
+            # We copy their info and link them to the new tutor automatically!
+            existing = students_all[0]
+            new_student = Student(
+                tutor_id=tutor_id,
+                full_name=existing.full_name,
+                phone=existing.phone,
+                telegram_id=tg_id,
+                telegram_username=message.from_user.username,
+            )
+            session.add(new_student)
+            await session.commit()
+            
+            # Fetch all tutors linked to this student
+            tutor_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+            tutor_res = await session.execute(tutor_stmt)
+            tutor_ids = list(tutor_res.scalars().all())
+            reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
+            
+            await message.answer(
+                f"🎉 <b>Вы успешно прикрепились к преподавателю {tutor.name}!</b>\n\n"
+                f"Ваши данные (имя и телефон) скопированы автоматически.\n"
+                f"Используйте кнопки меню ниже, чтобы записаться на новое занятие или посмотреть свои записи.",
+                parse_mode="HTML",
+                reply_markup=reply_kb
+            )
             return
 
         # Store tutor_id in state
@@ -603,14 +631,15 @@ async def process_student_reg_phone(message: Message, state: FSMContext) -> None
     username = message.from_user.username
 
     async with async_session_factory() as session:
-        # Check if student with this phone already exists in DB
-        stmt = select(Student).where(Student.phone == phone)
+        # Check if student with this phone already exists in DB for this tutor
+        stmt = select(Student).where(Student.phone == phone, Student.tutor_id == tutor_id)
         res = await session.execute(stmt)
         student = res.scalar_one_or_none()
 
         if student is None:
             # Create brand new student
             student = Student(
+                tutor_id=tutor_id,
                 full_name=full_name,
                 phone=phone,
                 telegram_id=tg_id,
@@ -618,6 +647,10 @@ async def process_student_reg_phone(message: Message, state: FSMContext) -> None
             )
             session.add(student)
         else:
+            if not student.is_active:
+                await message.answer("❌ Вы были удалены репетитором из базы. Запись недоступна.")
+                await state.clear()
+                return
             # Link existing student record
             student.telegram_id = tg_id
             student.full_name = full_name
@@ -626,7 +659,12 @@ async def process_student_reg_phone(message: Message, state: FSMContext) -> None
 
         await session.commit()
         
-        reply_kb = build_student_menu(tutor_id, message.from_user.username, message.from_user.id)
+        student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+        student_res = await session.execute(student_stmt)
+        tutor_ids = list(student_res.scalars().all())
+        if tutor_id not in tutor_ids:
+            tutor_ids.append(tutor_id)
+        reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
 
         await state.clear()
         
@@ -642,18 +680,60 @@ async def process_student_reg_phone(message: Message, state: FSMContext) -> None
         )
 
 
+@router.message(F.text.func(lambda t: t and "записаться" in t.lower()))
+async def cmd_book_select_tutor(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    tg_id = message.from_user.id
+    
+    async with async_session_factory() as session:
+        # Check all tutors this student is registered with
+        student_stmt = select(Student).where(Student.telegram_id == tg_id).options(selectinload(Student.tutor))
+        student_res = await session.execute(student_stmt)
+        students = student_res.scalars().all()
+        
+        if not students:
+            await message.answer("⚠️ Вы не зарегистрированы как ученик в системе.")
+            return
+
+        # Always send the first tutor's WebApp link. Inside the WebApp, they can switch via dropdown.
+        from app.core.config import settings
+        from urllib.parse import urlencode
+        tutor = students[0].tutor
+        params = {}
+        if message.from_user.username:
+            params["tg_username"] = message.from_user.username
+        params["tg_id"] = str(tg_id)
+        query_str = f"?{urlencode(params)}"
+        web_app_url = f"{settings.web_url}/book/{tutor.id}{query_str}"
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📅 Записаться", web_app=WebAppInfo(url=web_app_url))
+        ]])
+        
+        # Build new student reply menu to refresh their keyboard immediately
+        tutor_ids = [s.tutor_id for s in students if s.tutor]
+        reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
+        
+        await message.answer(
+            "Ваше меню обновлено. Используйте кнопку ниже или обновленную кнопку меню <b>«📅 Записаться»</b>:",
+            parse_mode="HTML",
+            reply_markup=reply_kb
+        )
+        await message.answer("Перейти к расписанию:", reply_markup=kb)
+
+
 @router.message(F.text.func(lambda t: t and "мои записи" in t.lower()))
 async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
     await state.clear()
     tg_id = message.from_user.id
     
     async with async_session_factory() as session:
-        # Check if they are a registered student
-        student_stmt = select(Student).where(Student.telegram_id == tg_id)
+        # Check if they are a registered student (could be registered under multiple tutors)
+        student_stmt = select(Student.id).where(Student.telegram_id == tg_id)
         student_res = await session.execute(student_stmt)
-        student = student_res.scalar_one_or_none()
+        student_ids = student_res.scalars().all()
         
-        if not student:
+        if not student_ids:
             await message.answer("⚠️ Вы не зарегистрированы как ученик в системе.")
             return
             
@@ -662,10 +742,11 @@ async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
         bookings_stmt = (
             select(Booking)
             .where(
-                Booking.student_id == student.id,
+                Booking.student_id.in_(student_ids),
                 Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
                 Booking.appointment_time >= now_utc - timedelta(hours=2)
             )
+            .options(selectinload(Booking.tutor))
             .order_by(Booking.appointment_time.asc())
         )
         bookings_res = await session.execute(bookings_stmt)
@@ -687,9 +768,10 @@ async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
             time_str = fmt_time(b.appointment_time)
             status_emoji = STATUS_EMOJI.get(b.status.value, "🟡")
             status_text = "подтверждено" if b.status == BookingStatus.CONFIRMED else "ожидает подтверждения"
+            tutor_name = b.tutor.name if b.tutor else "Преподаватель"
             
             lines.append(
-                f"{status_emoji} <b>{dt_str} в {time_str}</b>\n"
+                f"{status_emoji} <b>{dt_str} в {time_str}</b> (Репетитор: {tutor_name})\n"
                 f"   Услуга: {b.service_type}\n"
                 f"   Статус: <i>{status_text}</i>\n"
             )
@@ -845,16 +927,12 @@ async def cmd_students(message: Message, state: FSMContext) -> None:
             await _handle_non_tutor(message, session)
             return
 
-        # Distinct students via a grouped subquery on student_id
+        # Distinct students belonging to this tutor
         result = await session.execute(
             select(Student)
             .where(
+                Student.tutor_id == tutor.id,
                 Student.is_active == True,
-                Student.id.in_(
-                    select(Booking.student_id)
-                    .where(Booking.tutor_id == tutor.id)
-                    .distinct()
-                )
             )
             .order_by(Student.full_name)
         )
@@ -905,9 +983,17 @@ async def cb_student_history(callback: CallbackQuery) -> None:
     student_id = int(callback.data.split(":")[1])
 
     async with async_session_factory() as session:
+        tutor = await _get_tutor(callback.from_user.id, session)
+        if tutor is None:
+            await callback.answer("Ошибка доступа.", show_alert=True)
+            return
+
         result = await session.execute(
             select(Student)
-            .where(Student.id == student_id)
+            .where(
+                Student.id == student_id,
+                Student.tutor_id == tutor.id,
+            )
             .options(selectinload(Student.bookings))
         )
         student = result.scalar_one_or_none()
@@ -1008,10 +1094,16 @@ async def cmd_student_direct(message: Message, state: FSMContext) -> None:
 
 async def _show_student_card(message: Message, phone: str) -> None:
     async with async_session_factory() as session:
+        tutor = await _get_tutor(message.from_user.id, session)
+        if tutor is None:
+            await _handle_non_tutor(message, session)
+            return
+
         result = await session.execute(
             select(Student)
             .where(
                 Student.phone == phone,
+                Student.tutor_id == tutor.id,
                 Student.is_active == True,
             )
             .options(selectinload(Student.bookings))
@@ -1257,14 +1349,26 @@ async def process_sbp_phone(message: Message, state: FSMContext) -> None:
 
     phone = message.text.strip()
     digits = "".join(c for c in phone if c.isdigit())
-    if len(digits) < 10 or len(digits) > 15:
-        await message.answer("❌ Пожалуйста, введите корректный номер телефона (например, +79991234567).")
+    
+    # Normalize Russian phone numbers to +7XXXXXXXXXX
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    elif len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+
+    if len(digits) != 11 or not digits.startswith("7"):
+        await message.answer(
+            "❌ Неверный формат номера телефона для СБП.\n"
+            "Пожалуйста, введите корректный российский номер телефона (11 цифр, например: +79991234567 или 89991234567)."
+        )
         return
+
+    normalized_phone = f"+{digits}"
 
     async with async_session_factory() as session:
         tutor = await _get_tutor(message.from_user.id, session)
         if tutor:
-            tutor.sbp_phone = phone
+            tutor.sbp_phone = normalized_phone
             await session.commit()
             
     await state.clear()
@@ -3036,16 +3140,12 @@ async def cb_broadcast_confirm(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer("Ошибка: данные рассылки утеряны.", show_alert=True)
         return
 
-    # Fetch ALL active students
+    # Fetch ALL active students for this tutor
     async with async_session_factory() as session:
         result = await session.execute(
             select(Student).where(
+                Student.tutor_id == tutor_id,
                 Student.is_active == True,
-                Student.id.in_(
-                    select(Booking.student_id)
-                    .where(Booking.tutor_id == tutor_id)
-                    .distinct()
-                ),
             )
         )
         students = result.scalars().all()

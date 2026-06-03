@@ -141,18 +141,18 @@ async def create_booking_from_web(
     # 2. Resolve Student
     student = None
     if telegram_id:
-        stmt = select(Student).where(Student.telegram_id == telegram_id)
+        stmt = select(Student).where(Student.telegram_id == telegram_id, Student.tutor_id == tutor_id)
         result = await session.execute(stmt)
         student = result.scalar_one_or_none()
 
     if student is None and telegram_username:
         clean_username = telegram_username.lstrip("@")
-        stmt = select(Student).where(Student.telegram_username == clean_username)
+        stmt = select(Student).where(Student.telegram_username == clean_username, Student.tutor_id == tutor_id)
         result = await session.execute(stmt)
         student = result.scalar_one_or_none()
 
     if student is None and phone:
-        stmt = select(Student).where(Student.phone == phone)
+        stmt = select(Student).where(Student.phone == phone, Student.tutor_id == tutor_id)
         result = await session.execute(stmt)
         student = result.scalar_one_or_none()
 
@@ -163,6 +163,7 @@ async def create_booking_from_web(
             phone = f"+999{abs(hash(uname_part)) % 1000000000:09d}"
 
         student = Student(
+            tutor_id=tutor_id,
             full_name=full_name,
             phone=phone,
             telegram_username=telegram_username.lstrip("@") if telegram_username else None,
@@ -172,7 +173,7 @@ async def create_booking_from_web(
         await session.flush()
     else:
         if not student.is_active:
-            student.is_active = True
+            raise ValueError("Вы были удалены репетитором из базы. Запись недоступна.")
         student.full_name = full_name
         if telegram_username:
             student.telegram_username = telegram_username.lstrip("@")
@@ -452,3 +453,44 @@ async def create_booking_internal(
     )
     result = await session.execute(stmt)
     return result.scalar_one()
+
+
+async def record_student_no_show(
+    session: AsyncSession,
+    *,
+    booking_id: int,
+) -> Booking:
+    """
+    Records a student absence/no-show for a booking.
+    Deducts 1 prepaid lesson from the student's prepaid balance if they have one.
+    Updates the booking status to CANCELLED.
+    """
+    stmt = (
+        select(Booking)
+        .where(Booking.id == booking_id)
+        .options(selectinload(Booking.student))
+    )
+    result = await session.execute(stmt)
+    booking = result.scalar_one_or_none()
+
+    if not booking:
+        raise ValueError("Запись не найдена.")
+
+    if booking.status == BookingStatus.CANCELLED:
+        raise ValueError("Запись уже отменена.")
+
+    booking.status = BookingStatus.CANCELLED
+    
+    # If student has a prepaid balance, deduct 1 lesson for the no-show
+    if booking.student:
+        if booking.student.prepaid_balance > 0:
+            booking.student.prepaid_balance -= 1
+            logger.info(
+                "Deducted 1 prepaid lesson from student #%d due to no-show. Remaining: %d",
+                booking.student.id,
+                booking.student.prepaid_balance
+            )
+
+    await session.commit()
+    return booking
+

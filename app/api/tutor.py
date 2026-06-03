@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_session
-from app.db.models import Tutor, Service
+from app.db.models import Tutor, Service, Student
 from app.services.booking_service import get_available_slots
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,37 @@ async def list_tutors(session: AsyncSession = Depends(get_session)):
     """List all active tutors."""
     result = await session.execute(select(Tutor).where(Tutor.is_active == True))
     return result.scalars().all()
+
+
+@router.get("/by-student", response_model=list[TutorRead])
+async def get_tutors_by_student(
+    telegram_id: int | None = Query(None, description="Telegram ID of the student"),
+    phone: str | None = Query(None, description="Phone number of the student"),
+    session: AsyncSession = Depends(get_session),
+) -> list[TutorRead]:
+    """Get list of active tutors associated with a student."""
+    if not telegram_id and not phone:
+        return []
+    
+    stmt = select(Tutor)
+    if telegram_id:
+        stmt = stmt.join(Student, Student.tutor_id == Tutor.id).where(Student.telegram_id == telegram_id)
+    elif phone:
+        digits = "".join(c for c in phone if c.isdigit())
+        if len(digits) == 11 and digits.startswith("8"):
+            digits = "7" + digits[1:]
+        elif len(digits) == 10:
+            digits = "7" + digits
+        normalized = f"+{digits}"
+        
+        stmt = stmt.join(Student, Student.tutor_id == Tutor.id).where(
+            (Student.phone == phone) | (Student.phone == normalized) | (Student.phone == digits)
+        )
+        
+    stmt = stmt.where(Tutor.is_active == True)
+    result = await session.execute(stmt)
+    tutors = result.scalars().all()
+    return tutors
 
 
 @router.get("/{tutor_id}", response_model=TutorRead)

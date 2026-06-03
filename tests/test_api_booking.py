@@ -90,8 +90,10 @@ async def seed_db(test_session_factory):
         await session.flush()
 
         student = Student(
+            tutor_id=tutor.id,
             full_name="Existing Student",
             phone="+998901234567",
+            telegram_id=987654321,
         )
         session.add(student)
 
@@ -222,3 +224,28 @@ def test_create_booking_with_telegram_id(app_client):
     
     # Verify in DB if possible (though we use overrides, we can check if it returned success)
     # The service layer is already tested, but this ensures the API passes it through.
+
+
+def test_get_tutors_by_student_by_telegram_id(app_client):
+    """Can find tutor by student telegram_id."""
+    response = app_client.get("/api/v1/tutors/by-student?telegram_id=987654321")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "API Tutor"
+
+
+def test_get_tutors_by_student_by_phone(app_client):
+    """Can find tutor by student phone."""
+    response = app_client.get("/api/v1/tutors/by-student?phone=+998901234567")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "API Tutor"
+
+
+def test_get_tutors_by_student_empty(app_client):
+    """Calling without parameters returns empty list."""
+    response = app_client.get("/api/v1/tutors/by-student")
+    assert response.status_code == 200
+    assert response.json() == []
