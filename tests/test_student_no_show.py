@@ -5,7 +5,7 @@ AcademicLink — Unit Tests for Student Absence / No-show
 import pytest
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
-from app.db.models import Booking, BookingStatus, Student
+from app.db.models import Booking, BookingStatus, Student, StudentTutorLink
 from app.services.booking_service import record_student_no_show
 
 @pytest.mark.asyncio
@@ -14,10 +14,18 @@ async def test_student_no_show_deducts_prepaid_balance(seeded_session):
     If a student has a prepaid balance, marking a booking as a no-show 
     should deduct one lesson and cancel the booking.
     """
-    # Find the seeded student and give them a prepaid balance of 3
+    # Find the seeded student
     result = await seeded_session.execute(select(Student).limit(1))
     student = result.scalar_one()
-    student.prepaid_balance = 3
+
+    # Find the seeded link and give them a prepaid balance of 3
+    stmt = select(StudentTutorLink).where(
+        StudentTutorLink.student_id == student.id,
+        StudentTutorLink.tutor_id == 1
+    )
+    res = await seeded_session.execute(stmt)
+    link = res.scalar_one()
+    link.prepaid_balance = 3
     await seeded_session.commit()
 
     # Create a confirmed booking
@@ -38,7 +46,8 @@ async def test_student_no_show_deducts_prepaid_balance(seeded_session):
 
     # Check status and remaining prepaid balance
     assert updated_booking.status == BookingStatus.CANCELLED
-    assert student.prepaid_balance == 2
+    await seeded_session.refresh(link)
+    assert link.prepaid_balance == 2
 
 
 @pytest.mark.asyncio
@@ -49,7 +58,15 @@ async def test_student_no_show_without_prepaid_balance(seeded_session):
     """
     result = await seeded_session.execute(select(Student).limit(1))
     student = result.scalar_one()
-    student.prepaid_balance = 0
+
+    # Find the seeded link and give them a prepaid balance of 0
+    stmt = select(StudentTutorLink).where(
+        StudentTutorLink.student_id == student.id,
+        StudentTutorLink.tutor_id == 1
+    )
+    res = await seeded_session.execute(stmt)
+    link = res.scalar_one()
+    link.prepaid_balance = 0
     await seeded_session.commit()
 
     # Create a confirmed booking
@@ -70,4 +87,6 @@ async def test_student_no_show_without_prepaid_balance(seeded_session):
 
     # Check status and remaining prepaid balance
     assert updated_booking.status == BookingStatus.CANCELLED
-    assert student.prepaid_balance == 0
+    await seeded_session.refresh(link)
+    assert link.prepaid_balance == 0
+

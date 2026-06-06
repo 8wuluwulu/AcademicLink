@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import SQLModel
 
-from app.db.models import AvailabilitySlot, Student, Tutor
+from app.db.models import AvailabilitySlot, Student, Tutor, StudentTutorLink
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -90,12 +90,19 @@ async def seed_db(test_session_factory):
         await session.flush()
 
         student = Student(
-            tutor_id=tutor.id,
             full_name="Existing Student",
             phone="+998901234567",
             telegram_id=987654321,
         )
         session.add(student)
+        await session.flush()
+
+        link = StudentTutorLink(
+            student_id=student.id,
+            tutor_id=tutor.id,
+            is_active=True,
+        )
+        session.add(link)
 
         slot = AvailabilitySlot(
             tutor_id=tutor.id,

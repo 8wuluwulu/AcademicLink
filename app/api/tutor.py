@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_session
-from app.db.models import Tutor, Service, Student
+from app.db.models import Tutor, Service, Student, StudentTutorLink
 from app.services.booking_service import get_available_slots
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ async def get_tutors_by_student(
     
     stmt = select(Tutor)
     if telegram_id:
-        stmt = stmt.join(Student, Student.tutor_id == Tutor.id).where(Student.telegram_id == telegram_id)
+        stmt = stmt.join(StudentTutorLink, StudentTutorLink.tutor_id == Tutor.id).join(Student, Student.id == StudentTutorLink.student_id).where(Student.telegram_id == telegram_id)
     elif phone:
         digits = "".join(c for c in phone if c.isdigit())
         if len(digits) == 11 and digits.startswith("8"):
@@ -87,7 +87,7 @@ async def get_tutors_by_student(
             digits = "7" + digits
         normalized = f"+{digits}"
         
-        stmt = stmt.join(Student, Student.tutor_id == Tutor.id).where(
+        stmt = stmt.join(StudentTutorLink, StudentTutorLink.tutor_id == Tutor.id).join(Student, Student.id == StudentTutorLink.student_id).where(
             (Student.phone == phone) | (Student.phone == normalized) | (Student.phone == digits)
         )
         

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, Tutor, TutorAbsence
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, Tutor, TutorAbsence, StudentTutorLink
 
 logger = logging.getLogger(__name__)
 
@@ -141,18 +141,18 @@ async def create_booking_from_web(
     # 2. Resolve Student
     student = None
     if telegram_id:
-        stmt = select(Student).where(Student.telegram_id == telegram_id, Student.tutor_id == tutor_id)
+        stmt = select(Student).where(Student.telegram_id == telegram_id)
         result = await session.execute(stmt)
         student = result.scalar_one_or_none()
 
     if student is None and telegram_username:
         clean_username = telegram_username.lstrip("@")
-        stmt = select(Student).where(Student.telegram_username == clean_username, Student.tutor_id == tutor_id)
+        stmt = select(Student).where(Student.telegram_username == clean_username)
         result = await session.execute(stmt)
         student = result.scalar_one_or_none()
 
     if student is None and phone:
-        stmt = select(Student).where(Student.phone == phone, Student.tutor_id == tutor_id)
+        stmt = select(Student).where(Student.phone == phone)
         result = await session.execute(stmt)
         student = result.scalar_one_or_none()
 
@@ -163,7 +163,6 @@ async def create_booking_from_web(
             phone = f"+999{abs(hash(uname_part)) % 1000000000:09d}"
 
         student = Student(
-            tutor_id=tutor_id,
             full_name=full_name,
             phone=phone,
             telegram_username=telegram_username.lstrip("@") if telegram_username else None,
@@ -172,13 +171,27 @@ async def create_booking_from_web(
         session.add(student)
         await session.flush()
     else:
-        if not student.is_active:
-            raise ValueError("Вы были удалены репетитором из базы. Запись недоступна.")
         student.full_name = full_name
         if telegram_username:
             student.telegram_username = telegram_username.lstrip("@")
         if telegram_id:
             student.telegram_id = telegram_id
+
+    # Resolve/create the tutor link to check active state and manage balance/notes
+    stmt = select(StudentTutorLink).where(StudentTutorLink.student_id == student.id, StudentTutorLink.tutor_id == tutor_id)
+    res = await session.execute(stmt)
+    link = res.scalar_one_or_none()
+
+    if link is None:
+        link = StudentTutorLink(
+            student_id=student.id,
+            tutor_id=tutor_id,
+            is_active=True,
+        )
+        session.add(link)
+    else:
+        if not link.is_active:
+            raise ValueError("Вы были удалены репетитором из базы. Запись недоступна.")
 
     # 3. Resolve Tutor
     tutor = await session.get(Tutor, tutor_id)
@@ -483,12 +496,19 @@ async def record_student_no_show(
     
     # If student has a prepaid balance, deduct 1 lesson for the no-show
     if booking.student:
-        if booking.student.prepaid_balance > 0:
-            booking.student.prepaid_balance -= 1
+        stmt = select(StudentTutorLink).where(
+            StudentTutorLink.student_id == booking.student_id,
+            StudentTutorLink.tutor_id == booking.tutor_id
+        )
+        res = await session.execute(stmt)
+        link = res.scalar_one_or_none()
+        if link and link.prepaid_balance > 0:
+            link.prepaid_balance -= 1
             logger.info(
-                "Deducted 1 prepaid lesson from student #%d due to no-show. Remaining: %d",
+                "Deducted 1 prepaid lesson from student #%d (tutor #%d) due to no-show. Remaining: %d",
                 booking.student.id,
-                booking.student.prepaid_balance
+                booking.tutor_id,
+                link.prepaid_balance
             )
 
     await session.commit()

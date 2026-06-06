@@ -24,32 +24,59 @@ class BookingStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
 
 
+# ── StudentTutorLink ─────────────────────────────────────────────────
+class StudentTutorLink(SQLModel, table=True):
+    """Link table between Student and Tutor, with tutor-specific student information."""
+
+    __tablename__ = "student_tutor_links"
+
+    student_id: int = Field(
+        foreign_key="students.id",
+        primary_key=True,
+        ondelete="CASCADE",
+    )
+    tutor_id: int = Field(
+        foreign_key="tutors.id",
+        primary_key=True,
+        ondelete="CASCADE",
+    )
+    prepaid_balance: int = Field(
+        default=0,
+        description="Number of pre-paid lessons remaining with this tutor",
+    )
+    notes: str | None = Field(
+        default=None,
+        sa_type=Text(),
+        description="Tutor's private notes about the student",
+    )
+    is_active: bool = Field(
+        default=True,
+        description="Whether this student is active for this tutor",
+    )
+
+    # ── Relationships ────────────────────────────────────────────────
+    student: "Student" = Relationship(back_populates="tutor_links")
+    tutor: "Tutor" = Relationship(back_populates="student_links")
+
+
 # ── Student ──────────────────────────────────────────────────────────
 class Student(SQLModel, table=True):
     """A student who books tutoring sessions."""
 
     __tablename__ = "students"
 
-    __table_args__ = (
-        UniqueConstraint("tutor_id", "phone", name="uq_students_tutor_phone"),
-        UniqueConstraint("tutor_id", "telegram_id", name="uq_students_tutor_telegram_id"),
-    )
-
     id: int | None = Field(default=None, primary_key=True)
-    tutor_id: int = Field(
-        foreign_key="tutors.id",
-        index=True,
-        description="The tutor this student is associated with",
-    )
     full_name: str = Field(max_length=255, description="Student's full name")
     phone: str = Field(
         max_length=20,
+        unique=True,
         index=True,
         description="Contact phone number",
     )
     telegram_id: int | None = Field(
         default=None,
         sa_type=BigInteger(),
+        unique=True,
         index=True,
         description="Telegram user ID (optional)",
     )
@@ -58,19 +85,6 @@ class Student(SQLModel, table=True):
         max_length=32,
         description="Telegram @username (without @)",
     )
-    notes: str | None = Field(
-        default=None,
-        sa_type=Text(),
-        description="Tutor's private notes about the student",
-    )
-    prepaid_balance: int = Field(
-        default=0,
-        description="Number of pre-paid lessons remaining",
-    )
-    is_active: bool = Field(
-        default=True,
-        description="Whether the student is active and shown in lists",
-    )
     wants_reminders: bool = Field(
         default=True,
         description="Whether the student wants reminder notifications",
@@ -78,10 +92,13 @@ class Student(SQLModel, table=True):
 
     # ── Relationships ────────────────────────────────────────────────
     bookings: list["Booking"] = Relationship(back_populates="student")
-    tutor: Optional["Tutor"] = Relationship(back_populates="students")
+    tutor_links: list["StudentTutorLink"] = Relationship(
+        back_populates="student",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
     def __repr__(self) -> str:
-        return f"<Student id={self.id} name={self.full_name!r} tutor={self.tutor_id}>"
+        return f"<Student id={self.id} name={self.full_name!r}>"
 
 
 # ── Tutor ────────────────────────────────────────────────────────────
@@ -187,7 +204,10 @@ class Tutor(SQLModel, table=True):
         back_populates="tutor",
     )
     services: list["Service"] = Relationship(back_populates="tutor")
-    students: list["Student"] = Relationship(back_populates="tutor")
+    student_links: list["StudentTutorLink"] = Relationship(
+        back_populates="tutor",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
     def __repr__(self) -> str:
         return f"<Tutor id={self.id} name={self.name!r} active={self.is_active}>"

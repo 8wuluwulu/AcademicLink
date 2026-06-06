@@ -51,7 +51,7 @@ from app.bot.formatting import (
 )
 
 from app.db.database import async_session_factory
-from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, Tutor, TutorAbsence
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, Tutor, TutorAbsence, StudentTutorLink
 
 logger = logging.getLogger(__name__)
 router = Router(name="main_router")
@@ -85,6 +85,10 @@ class BroadcastStates(StatesGroup):
 
 
 class RescheduleStates(StatesGroup):
+    waiting_datetime = State()
+
+
+class StudentRescheduleStates(StatesGroup):
     waiting_datetime = State()
 
 
@@ -167,6 +171,11 @@ class TutorCallbackMiddleware(BaseMiddleware):
         event: CallbackQuery,
         data: Dict[str, Any]
     ) -> Any:
+        # Allow student-scoped callbacks to pass through without tutor check
+        student_prefixes = ("student_cancel", "student_reschedule", "student_toggle_remind")
+        if event.data and any(event.data.startswith(p) for p in student_prefixes):
+            return await handler(event, data)
+
         async with async_session_factory() as session:
             tutor = await _get_tutor(event.from_user.id, session)
             if tutor is None:
@@ -226,7 +235,7 @@ router.message.outer_middleware(TutorMessageMiddleware())
 async def _handle_non_tutor(message: Message, session) -> None:
     """Handles messages from non-tutors gracefully by resetting their keyboard or showing onboarding."""
     tg_id = message.from_user.id
-    student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+    student_stmt = select(StudentTutorLink.tutor_id).join(Student).where(Student.telegram_id == tg_id)
     student_res = await session.execute(student_stmt)
     tutor_ids = list(student_res.scalars().all())
     
@@ -322,11 +331,9 @@ async def _send_dashboard(message: Message) -> None:
             pending_count = pending_res.scalar_one()
 
             students_res = await session.execute(
-                select(func.count(func.distinct(Booking.student_id))).where(
-                    Booking.tutor_id == tutor.id,
-                    Booking.student_id.in_(
-                        select(Student.id).where(Student.is_active == True)
-                    )
+                select(func.count(StudentTutorLink.student_id)).where(
+                    StudentTutorLink.tutor_id == tutor.id,
+                    StudentTutorLink.is_active == True,
                 )
             )
             total_students = students_res.scalar_one()
@@ -366,11 +373,21 @@ async def _send_dashboard(message: Message) -> None:
         student_stmt = select(Student).where(Student.telegram_id == tg_id).limit(1)
         student_res = await session.execute(student_stmt)
         linked_student = student_res.scalar_one_or_none()
-        student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+        student_stmt = select(StudentTutorLink.tutor_id).join(Student).where(Student.telegram_id == tg_id)
         student_res = await session.execute(student_stmt)
         tutor_ids = list(student_res.scalars().all())
         if tutor_ids:
             reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
+
+            # Build reminder toggle inline button
+            remind_icon = "🔔" if linked_student.wants_reminders else "🔕"
+            remind_label = "Вкл" if linked_student.wants_reminders else "Выкл"
+            remind_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=f"{remind_icon} Напоминания: {remind_label}",
+                    callback_data="student_toggle_remind",
+                )]
+            ])
 
             await message.answer(
                 f"👋 Рады видеть вас снова, <b>{linked_student.full_name}</b>!\n\n"
@@ -379,6 +396,11 @@ async def _send_dashboard(message: Message) -> None:
                 f"Используйте кнопки меню ниже, чтобы записаться на новое занятие или посмотреть свои записи.",
                 parse_mode="HTML",
                 reply_markup=reply_kb
+            )
+            await message.answer(
+                "⚙️ <b>Настройки уведомлений:</b>",
+                parse_mode="HTML",
+                reply_markup=remind_kb,
             )
             return
 
@@ -396,7 +418,7 @@ async def _send_dashboard(message: Message) -> None:
                     s.telegram_id = tg_id
                 await session.commit()
 
-                student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+                student_stmt = select(StudentTutorLink.tutor_id).join(Student).where(Student.telegram_id == tg_id)
                 student_res = await session.execute(student_stmt)
                 tutor_ids = list(student_res.scalars().all())
                 reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
@@ -528,7 +550,10 @@ async def start_student_registration(message: Message, state: FSMContext, tutor_
             return
 
         # Check if already registered student for this specific tutor
-        stmt = select(Student).where(Student.telegram_id == tg_id, Student.tutor_id == tutor_id)
+        stmt = select(Student).join(StudentTutorLink).where(
+            Student.telegram_id == tg_id,
+            StudentTutorLink.tutor_id == tutor_id
+        )
         res = await session.execute(stmt)
         student_current = res.scalar_one_or_none()
         
@@ -540,23 +565,20 @@ async def start_student_registration(message: Message, state: FSMContext, tutor_
         # Check if registered with ANY OTHER tutor
         stmt = select(Student).where(Student.telegram_id == tg_id)
         res = await session.execute(stmt)
-        students_all = res.scalars().all()
+        student_global = res.scalar_one_or_none()
         
-        if students_all:
-            # We copy their info and link them to the new tutor automatically!
-            existing = students_all[0]
-            new_student = Student(
+        if student_global:
+            # Under Many-to-Many we just insert a new StudentTutorLink record!
+            new_link = StudentTutorLink(
+                student_id=student_global.id,
                 tutor_id=tutor_id,
-                full_name=existing.full_name,
-                phone=existing.phone,
-                telegram_id=tg_id,
-                telegram_username=message.from_user.username,
+                is_active=True,
             )
-            session.add(new_student)
+            session.add(new_link)
             await session.commit()
             
             # Fetch all tutors linked to this student
-            tutor_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+            tutor_stmt = select(StudentTutorLink.tutor_id).join(Student).where(Student.telegram_id == tg_id)
             tutor_res = await session.execute(tutor_stmt)
             tutor_ids = list(tutor_res.scalars().all())
             reply_kb = build_student_menu(tutor_ids, message.from_user.username, message.from_user.id)
@@ -631,35 +653,59 @@ async def process_student_reg_phone(message: Message, state: FSMContext) -> None
     username = message.from_user.username
 
     async with async_session_factory() as session:
-        # Check if student with this phone already exists in DB for this tutor
-        stmt = select(Student).where(Student.phone == phone, Student.tutor_id == tutor_id)
+        # Check if student with this phone already exists globally in DB
+        stmt = select(Student).where(Student.phone == phone)
         res = await session.execute(stmt)
         student = res.scalar_one_or_none()
 
         if student is None:
             # Create brand new student
             student = Student(
-                tutor_id=tutor_id,
                 full_name=full_name,
                 phone=phone,
                 telegram_id=tg_id,
                 telegram_username=username,
             )
             session.add(student)
+            await session.flush()
+            
+            # Create a tutor link
+            link = StudentTutorLink(
+                student_id=student.id,
+                tutor_id=tutor_id,
+                is_active=True,
+            )
+            session.add(link)
         else:
-            if not student.is_active:
-                await message.answer("❌ Вы были удалены репетитором из базы. Запись недоступна.")
-                await state.clear()
-                return
-            # Link existing student record
+            # Link/Update existing student record
             student.telegram_id = tg_id
             student.full_name = full_name
             if username:
                 student.telegram_username = username
+                
+            # Check or create link
+            link_stmt = select(StudentTutorLink).where(
+                StudentTutorLink.student_id == student.id,
+                StudentTutorLink.tutor_id == tutor_id
+            )
+            link_res = await session.execute(link_stmt)
+            link = link_res.scalar_one_or_none()
+            if link is None:
+                link = StudentTutorLink(
+                    student_id=student.id,
+                    tutor_id=tutor_id,
+                    is_active=True,
+                )
+                session.add(link)
+            else:
+                if not link.is_active:
+                    await message.answer("❌ Вы были удалены репетитором из базы. Запись недоступна.")
+                    await state.clear()
+                    return
 
         await session.commit()
         
-        student_stmt = select(Student.tutor_id).where(Student.telegram_id == tg_id)
+        student_stmt = select(StudentTutorLink.tutor_id).join(Student).where(Student.telegram_id == tg_id)
         student_res = await session.execute(student_stmt)
         tutor_ids = list(student_res.scalars().all())
         if tutor_id not in tutor_ids:
@@ -744,7 +790,7 @@ async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
             .where(
                 Booking.student_id.in_(student_ids),
                 Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
-                Booking.appointment_time >= now_utc - timedelta(hours=2)
+                Booking.appointment_time >= now_utc - timedelta(minutes=15)
             )
             .options(selectinload(Booking.tutor))
             .order_by(Booking.appointment_time.asc())
@@ -763,6 +809,7 @@ async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
             
         # Format the list of bookings beautifully
         lines = ["🗂 <b>Ваши предстоящие занятия:</b>\n"]
+        kb_rows = []
         for b in bookings:
             dt_str = fmt_date(b.appointment_time)
             time_str = fmt_time(b.appointment_time)
@@ -775,9 +822,24 @@ async def cmd_my_bookings(message: Message, state: FSMContext) -> None:
                 f"   Услуга: {b.service_type}\n"
                 f"   Статус: <i>{status_text}</i>\n"
             )
+
+            # Add cancel/reschedule buttons for future bookings
+            if b.appointment_time > now_utc:
+                row = [
+                    InlineKeyboardButton(
+                        text=f"❌ Отменить ({time_str})",
+                        callback_data=f"student_cancel_init:{b.id}",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"🔄 Перенести ({time_str})",
+                        callback_data=f"student_reschedule_init:{b.id}",
+                    ),
+                ]
+                kb_rows.append(row)
             
         text = "\n".join(lines)
-        await message.answer(text, parse_mode="HTML")
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
+        await message.answer(text, parse_mode="HTML", reply_markup=inline_kb)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -800,11 +862,13 @@ async def _build_bookings_page(
         if tutor is None:
             return _NOT_REGISTERED, None
 
+        now_utc = datetime.now(timezone.utc)
         result = await session.execute(
             select(Booking)
             .where(
                 Booking.tutor_id == tutor.id,
                 Booking.status.in_(statuses),
+                Booking.appointment_time >= now_utc - timedelta(minutes=15),
             )
             .options(selectinload(Booking.student))
             .order_by(Booking.appointment_time)
@@ -930,9 +994,10 @@ async def cmd_students(message: Message, state: FSMContext) -> None:
         # Distinct students belonging to this tutor
         result = await session.execute(
             select(Student)
+            .join(StudentTutorLink)
             .where(
-                Student.tutor_id == tutor.id,
-                Student.is_active == True,
+                StudentTutorLink.tutor_id == tutor.id,
+                StudentTutorLink.is_active == True,
             )
             .order_by(Student.full_name)
         )
@@ -990,9 +1055,10 @@ async def cb_student_history(callback: CallbackQuery) -> None:
 
         result = await session.execute(
             select(Student)
+            .join(StudentTutorLink)
             .where(
                 Student.id == student_id,
-                Student.tutor_id == tutor.id,
+                StudentTutorLink.tutor_id == tutor.id,
             )
             .options(selectinload(Student.bookings))
         )
@@ -1002,7 +1068,7 @@ async def cb_student_history(callback: CallbackQuery) -> None:
         await callback.answer("Ученик не найден.", show_alert=True)
         return
 
-    bookings = sorted(student.bookings, key=lambda b: b.appointment_time, reverse=True)
+    bookings = sorted([b for b in student.bookings if b.tutor_id == tutor.id], key=lambda b: b.appointment_time, reverse=True)
 
     lines = [
         f"👤 <b>{student.full_name}</b>",
@@ -1101,10 +1167,11 @@ async def _show_student_card(message: Message, phone: str) -> None:
 
         result = await session.execute(
             select(Student)
+            .join(StudentTutorLink)
             .where(
                 Student.phone == phone,
-                Student.tutor_id == tutor.id,
-                Student.is_active == True,
+                StudentTutorLink.tutor_id == tutor.id,
+                StudentTutorLink.is_active == True,
             )
             .options(selectinload(Student.bookings))
         )
@@ -1119,7 +1186,7 @@ async def _show_student_card(message: Message, phone: str) -> None:
         )
         return
 
-    bookings = sorted(student.bookings, key=lambda b: b.appointment_time, reverse=True)
+    bookings = sorted([b for b in student.bookings if b.tutor_id == tutor.id], key=lambda b: b.appointment_time, reverse=True)
 
     lines = [
         f"👤 <b>{student.full_name}</b>",
@@ -2287,27 +2354,37 @@ async def cb_student_delete_confirm(callback: CallbackQuery, state: FSMContext) 
         return
 
     async with async_session_factory() as session:
+        tutor = await _get_tutor(callback.from_user.id, session)
+        if tutor is None:
+            await callback.answer("Ошибка доступа.", show_alert=True)
+            return
+
         student = await session.get(Student, student_id)
         if student is None:
             await callback.answer("Ученик не найден.", show_alert=True)
             return
 
-        # Soft delete
-        student.is_active = False
+        # Soft delete inside the link table
+        stmt = select(StudentTutorLink).where(
+            StudentTutorLink.student_id == student_id,
+            StudentTutorLink.tutor_id == tutor.id
+        )
+        res = await session.execute(stmt)
+        link = res.scalar_one_or_none()
+        if link:
+            link.is_active = False
 
-        # Cleanup: Cancel PENDING bookings
+        # Cleanup: Cancel PENDING bookings for this tutor
         result = await session.execute(
             select(Booking).where(
                 Booking.student_id == student_id,
+                Booking.tutor_id == tutor.id,
                 Booking.status == BookingStatus.PENDING,
             )
         )
         pending_bookings = result.scalars().all()
         for b in pending_bookings:
             b.status = BookingStatus.CANCELLED
-            # Here we could also log the reason if we had a reason field in Booking model
-            # But the prompt says "Student removed from CRM." as the reason.
-            # Assuming we might want to notify or just leave it.
 
         await session.commit()
         student_name = student.full_name
@@ -2955,6 +3032,336 @@ async def cb_manual_book_init(callback: CallbackQuery, state: FSMContext) -> Non
     await callback.answer()
 
 
+# ═════════════════════════════════════════════════════════════════════
+#  🎓 Student: Cancel / Reschedule / Reminder Toggle
+# ═════════════════════════════════════════════════════════════════════
+
+
+@router.callback_query(F.data.startswith("student_cancel_init:"))
+async def cb_student_cancel_init(callback: CallbackQuery) -> None:
+    """Ask the student for cancellation confirmation, with a safety-buffer warning."""
+    booking_id = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student))
+        )
+        booking = result.scalar_one_or_none()
+
+        if booking is None:
+            await callback.answer("Запись не найдена.", show_alert=True)
+            return
+        if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
+            await callback.answer("Эта запись уже обработана.", show_alert=True)
+            return
+
+        # Verify ownership
+        if not booking.student or booking.student.telegram_id != callback.from_user.id:
+            await callback.answer("Это не ваша запись.", show_alert=True)
+            return
+
+    # Cancellation safety buffer
+    from app.core.config import settings
+    now_utc = datetime.now(timezone.utc)
+    hours_until = (booking.appointment_time - now_utc).total_seconds() / 3600
+
+    warning = ""
+    if 0 < hours_until < settings.cancel_safety_hours:
+        warning = (
+            f"\n\n⚠️ <b>Это занятие начинается менее чем через "
+            f"{settings.cancel_safety_hours} ч.!</b>\n"
+            f"Репетитор может не успеть увидеть уведомление."
+        )
+
+    text = (
+        "🔴 <b>Отмена занятия</b>\n\n"
+        f"🕒 {fmt_full(booking.appointment_time)}\n"
+        f"📚 {booking.service_type}\n\n"
+        "Вы действительно хотите отменить это занятие?\n"
+        "<i>Это действие нельзя отменить.</i>"
+        f"{warning}"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, отменить", callback_data=f"student_cancel_confirm:{booking_id}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data="student_cancel_abort"),
+        ]
+    ])
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("student_cancel_confirm:"))
+async def cb_student_cancel_confirm(callback: CallbackQuery) -> None:
+    """Execute student cancellation: set CANCELLED, delete calendar event, notify tutor."""
+    booking_id = int(callback.data.split(":")[1])
+
+    tutor_tg_id = None
+    appt_text = ""
+    service_name = ""
+    student_name = ""
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student), selectinload(Booking.tutor))
+        )
+        booking = result.scalar_one_or_none()
+
+        if booking is None:
+            await callback.answer("Запись не найдена.", show_alert=True)
+            return
+        if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
+            await callback.answer("Эта запись уже обработана.", show_alert=True)
+            return
+
+        # Verify ownership
+        if not booking.student or booking.student.telegram_id != callback.from_user.id:
+            await callback.answer("Это не ваша запись.", show_alert=True)
+            return
+
+        booking.status = BookingStatus.CANCELLED
+        await session.commit()
+
+        # Delete Google Calendar event
+        from app.services.google_calendar_service import delete_calendar_event
+        try:
+            await delete_calendar_event(session, booking)
+        except Exception as exc:
+            logger.error("Failed to delete Google event for student-cancelled booking #%d: %s", booking.id, exc)
+
+        # Collect tutor info for notification
+        if booking.tutor:
+            tutor_tg_id = booking.tutor.tg_id
+        appt_text = fmt_full(booking.appointment_time)
+        service_name = booking.service_type
+        student_name = booking.student.full_name if booking.student else "Ученик"
+
+    await callback.message.edit_text(
+        "🔴 <b>Занятие отменено</b>\n\n"
+        f"🕒 {appt_text}\n"
+        f"📚 {service_name}",
+        parse_mode="HTML",
+    )
+    await callback.answer("Занятие отменено")
+    logger.info("Booking #%d cancelled by student tg_id=%d", booking_id, callback.from_user.id)
+
+    # ── Notify tutor via Telegram ──────────────────────────────
+    if tutor_tg_id:
+        from app.core.bot import get_bot
+        bot = get_bot()
+        if bot:
+            text = (
+                f"🔴 <b>Ученик отменил занятие</b>\n\n"
+                f"👤 {student_name}\n"
+                f"🕒 {appt_text}\n"
+                f"📚 {service_name}\n\n"
+                f"<i>Это время снова доступно для записи.</i>"
+            )
+            try:
+                await bot.send_message(chat_id=tutor_tg_id, text=text, parse_mode="HTML")
+                logger.info("Tutor tg_id=%d notified about student cancellation of booking #%d", tutor_tg_id, booking_id)
+            except Exception as exc:
+                logger.error("Failed to notify tutor tg_id=%d: %s", tutor_tg_id, exc)
+
+
+@router.callback_query(F.data == "student_cancel_abort")
+async def cb_student_cancel_abort(callback: CallbackQuery) -> None:
+    await callback.message.edit_text("Отмена занятия отклонена.")
+    await callback.answer()
+
+
+# ── Student Reschedule ───────────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("student_reschedule_init:"))
+async def cb_student_reschedule_init(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start the student rescheduling flow — ask for a new date/time."""
+    booking_id = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student))
+        )
+        booking = result.scalar_one_or_none()
+
+        if booking is None:
+            await callback.answer("Запись не найдена.", show_alert=True)
+            return
+        if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
+            await callback.answer("Эту запись нельзя перенести.", show_alert=True)
+            return
+        # Verify ownership
+        if not booking.student or booking.student.telegram_id != callback.from_user.id:
+            await callback.answer("Это не ваша запись.", show_alert=True)
+            return
+
+    await state.set_state(StudentRescheduleStates.waiting_datetime)
+    await state.update_data(student_reschedule_booking_id=booking_id)
+
+    await callback.message.answer(
+        "🗓 <b>Перенос занятия</b>\n\n"
+        f"Текущее время: <b>{fmt_full(booking.appointment_time)}</b>\n\n"
+        "Введите новую дату и время (<b>ДД.ММ.ГГГГ ЧЧ:ММ</b>)\n"
+        "<i>Например: 25.05.2026 14:00</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(StudentRescheduleStates.waiting_datetime)
+async def process_student_reschedule_datetime(message: Message, state: FSMContext) -> None:
+    """Parse new date/time and execute the student reschedule."""
+    from app.services.booking_service import (
+        check_availability,
+        check_double_booking,
+        check_tutor_absence,
+    )
+    from app.services.google_calendar_service import sync_booking_to_calendar
+
+    try:
+        dt = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M").replace(tzinfo=MSK)
+        dt_utc = dt.astimezone(timezone.utc)
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат. Используйте <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    if dt_utc <= datetime.now(timezone.utc):
+        await message.answer("❌ Нельзя перенести занятие в прошлое.")
+        return
+
+    data = await state.get_data()
+    booking_id = data["student_reschedule_booking_id"]
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Booking)
+            .where(Booking.id == booking_id)
+            .options(selectinload(Booking.student), selectinload(Booking.tutor))
+        )
+        booking = result.scalar_one_or_none()
+
+        if booking is None:
+            await message.answer("❌ Запись не найдена.")
+            await state.clear()
+            return
+
+        # Fetch service for duration/buffer
+        from app.db.models import Service
+        service = await session.get(Service, booking.service_id) if booking.service_id else None
+        duration = service.duration if service else 60
+        buffer = service.buffer_time if service else 0
+
+        try:
+            await check_availability(session, tutor_id=booking.tutor_id, appointment_time=dt_utc)
+            await check_tutor_absence(session, tutor_id=booking.tutor_id, appointment_time=dt_utc)
+            await check_double_booking(
+                session,
+                tutor_id=booking.tutor_id,
+                appointment_time=dt_utc,
+                lesson_duration=duration,
+                buffer_time=buffer,
+                exclude_booking_id=booking.id,
+            )
+        except ValueError as exc:
+            await message.answer(
+                f"❌ {exc}\n\n<i>Попробуйте другое время.</i>",
+                parse_mode="HTML",
+            )
+            return
+
+        old_time = booking.appointment_time
+        booking.appointment_time = dt_utc
+        booking.status = BookingStatus.CONFIRMED
+        await session.commit()
+
+        # Sync with Google Calendar
+        try:
+            await sync_booking_to_calendar(session, booking)
+        except Exception as exc:
+            logger.error("Failed to sync student-rescheduled booking #%d to Calendar: %s", booking.id, exc)
+
+        tutor_tg_id = booking.tutor.tg_id if booking.tutor else None
+        service_name = booking.service_type
+        student_name = booking.student.full_name if booking.student else "Ученик"
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Занятие перенесено!</b>\n\n"
+        f"🕒 {fmt_full(old_time)} → <b>{fmt_full(dt_utc)}</b>",
+        parse_mode="HTML",
+    )
+    logger.info("Booking #%d rescheduled by student tg_id=%d", booking_id, message.from_user.id)
+
+    # ── Notify tutor ────────────────────────────────────────────────
+    if tutor_tg_id:
+        from app.core.bot import get_bot
+        bot = get_bot()
+        if bot:
+            text = (
+                f"🔄 <b>Ученик перенёс занятие</b>\n\n"
+                f"👤 {student_name}\n"
+                f"📚 {service_name}\n"
+                f"🕒 Было: {fmt_full(old_time)}\n"
+                f"🕒 Стало: <b>{fmt_full(dt_utc)}</b>"
+            )
+            try:
+                await bot.send_message(chat_id=tutor_tg_id, text=text, parse_mode="HTML")
+                logger.info("Tutor tg_id=%d notified about student reschedule of booking #%d", tutor_tg_id, booking_id)
+            except Exception as exc:
+                logger.error("Failed to notify tutor tg_id=%d: %s", tutor_tg_id, exc)
+
+
+# ── Student Reminder Toggle ─────────────────────────────────────────
+
+
+@router.callback_query(F.data == "student_toggle_remind")
+async def cb_student_toggle_remind(callback: CallbackQuery) -> None:
+    """Toggle Student.wants_reminders and update the inline button."""
+    tg_id = callback.from_user.id
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Student).where(Student.telegram_id == tg_id)
+        )
+        student = result.scalar_one_or_none()
+
+        if student is None:
+            await callback.answer("Ошибка: вы не зарегистрированы.", show_alert=True)
+            return
+
+        student.wants_reminders = not student.wants_reminders
+        await session.commit()
+        new_state = student.wants_reminders
+
+    remind_icon = "🔔" if new_state else "🔕"
+    remind_label = "Вкл" if new_state else "Выкл"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"{remind_icon} Напоминания: {remind_label}",
+            callback_data="student_toggle_remind",
+        )]
+    ])
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    alert = "🔔 Напоминания включены." if new_state else "🔕 Напоминания отключены."
+    await callback.answer(alert)
+    logger.info("Student tg_id=%d toggled wants_reminders=%s", tg_id, new_state)
+
+
 @router.message(ManualBookingStates.waiting_datetime)
 async def process_manual_book_datetime(message: Message, state: FSMContext) -> None:
     """Parse date/time for manual booking, then ask for service selection."""
@@ -3072,13 +3479,9 @@ async def cmd_broadcast(message: Message, state: FSMContext) -> None:
 
         # Count ALL reachable students (regardless of telegram_id)
         result = await session.execute(
-            select(func.count(func.distinct(Student.id))).where(
-                Student.is_active == True,
-                Student.id.in_(
-                    select(Booking.student_id)
-                    .where(Booking.tutor_id == tutor.id)
-                    .distinct()
-                ),
+            select(func.count(StudentTutorLink.student_id)).where(
+                StudentTutorLink.tutor_id == tutor.id,
+                StudentTutorLink.is_active == True,
             )
         )
         total_students = result.scalar_one()
@@ -3143,9 +3546,11 @@ async def cb_broadcast_confirm(callback: CallbackQuery, state: FSMContext) -> No
     # Fetch ALL active students for this tutor
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Student).where(
-                Student.tutor_id == tutor_id,
-                Student.is_active == True,
+            select(Student)
+            .join(StudentTutorLink)
+            .where(
+                StudentTutorLink.tutor_id == tutor_id,
+                StudentTutorLink.is_active == True,
             )
         )
         students = result.scalars().all()

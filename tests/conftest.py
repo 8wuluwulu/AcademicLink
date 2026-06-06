@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlmodel import SQLModel
 
-from app.db.models import AvailabilitySlot, Student, Tutor
+from app.db.models import AvailabilitySlot, Student, Tutor, StudentTutorLink
 
 
 # ── Event loop for async tests ───────────────────────────────────────
@@ -103,12 +103,19 @@ async def seeded_session(session: AsyncSession):
     await session.flush()
 
     student = Student(
-        tutor_id=tutor.id,
         full_name="Test Student",
         phone="+998901234567",
         telegram_id=987654321,
     )
     session.add(student)
+    await session.flush()
+
+    link = StudentTutorLink(
+        student_id=student.id,
+        tutor_id=tutor.id,
+        is_active=True,
+    )
+    session.add(link)
     await session.flush()
 
     # Add availability slots

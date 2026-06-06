@@ -78,48 +78,79 @@ def _auto_migrate_columns(connection) -> None:
     # Check students columns
     if 'students' in inspector.get_table_names():
         students_cols = [c['name'] for c in inspector.get_columns('students')]
-        if 'tutor_id' not in students_cols:
-            # 1. Add tutor_id column (initially nullable to allow creation)
-            connection.execute(text("ALTER TABLE students ADD COLUMN tutor_id INTEGER"))
+        if 'tutor_id' in students_cols:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("Migrating students table to Many-to-Many schema...")
             
-            # 2. Seed tutor_id for existing students (associate with the first tutor)
-            connection.execute(text(
-                "UPDATE students SET tutor_id = (SELECT id FROM tutors LIMIT 1) WHERE tutor_id IS NULL"
-            ))
+            # 1. Fetch all existing student records
+            existing_students = connection.execute(text(
+                "SELECT id, tutor_id, full_name, phone, telegram_id, telegram_username, notes, prepaid_balance, is_active, wants_reminders FROM students"
+            )).all()
             
-            # Make tutor_id NOT NULL and add foreign key constraint
-            connection.execute(text(
-                "ALTER TABLE students ALTER COLUMN tutor_id SET NOT NULL"
-            ))
-            connection.execute(text(
-                "ALTER TABLE students ADD CONSTRAINT fk_students_tutor_id FOREIGN KEY (tutor_id) REFERENCES tutors(id) ON DELETE CASCADE"
-            ))
+            # Group students to deduplicate. Group by telegram_id (if not null) or phone.
+            grouped_students = {}
+            for row in existing_students:
+                # row structure: (id, tutor_id, full_name, phone, telegram_id, telegram_username, notes, prepaid_balance, is_active, wants_reminders)
+                key = f"tg_{row[4]}" if row[4] is not None else f"phone_{row[3]}"
+                if key not in grouped_students:
+                    grouped_students[key] = []
+                grouped_students[key].append(row)
+                
+            for key, rows in grouped_students.items():
+                # Sort by ID to keep the oldest row as primary
+                rows.sort(key=lambda r: r[0])
+                primary_row = rows[0]
+                primary_id = primary_row[0]
+                
+                for row in rows:
+                    row_id, tutor_id, full_name, phone, telegram_id, telegram_username, notes, prepaid_balance, is_active, wants_reminders = row
+                    
+                    # Insert the association link
+                    connection.execute(text(
+                        "INSERT INTO student_tutor_links (student_id, tutor_id, prepaid_balance, notes, is_active) "
+                        "VALUES (:student_id, :tutor_id, :prepaid_balance, :notes, :is_active) "
+                        "ON CONFLICT (student_id, tutor_id) DO NOTHING"
+                    ), {
+                        "student_id": primary_id,
+                        "tutor_id": tutor_id,
+                        "prepaid_balance": prepaid_balance or 0,
+                        "notes": notes,
+                        "is_active": is_active if is_active is not None else True
+                    })
+                    
+                    if row_id != primary_id:
+                        # Redirect bookings to the primary student ID
+                        connection.execute(text(
+                            "UPDATE bookings SET student_id = :primary_id WHERE student_id = :old_id"
+                        ), {"primary_id": primary_id, "old_id": row_id})
+                        
+                        # Delete the duplicate student record
+                        connection.execute(text(
+                            "DELETE FROM students WHERE id = :old_id"
+                        ), {"old_id": row_id})
             
-            # 3. Drop existing global unique constraints and unique indexes
-            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_phone_key"))
-            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_telegram_id_key"))
+            # Now alter the students table to drop the deprecated fields and constraints
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS fk_students_tutor_id"))
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS uq_students_tutor_phone"))
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS uq_students_tutor_telegram_id"))
+            connection.execute(text("ALTER TABLE students DROP COLUMN IF EXISTS tutor_id"))
+            connection.execute(text("ALTER TABLE students DROP COLUMN IF EXISTS notes"))
+            connection.execute(text("ALTER TABLE students DROP COLUMN IF EXISTS prepaid_balance"))
+            connection.execute(text("ALTER TABLE students DROP COLUMN IF EXISTS is_active"))
+            
+            # Re-create unique constraints on students
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS uq_students_phone"))
+            connection.execute(text("ALTER TABLE students ADD CONSTRAINT uq_students_phone UNIQUE (phone)"))
+            
+            connection.execute(text("ALTER TABLE students DROP CONSTRAINT IF EXISTS uq_students_telegram_id"))
+            connection.execute(text("ALTER TABLE students ADD CONSTRAINT uq_students_telegram_id UNIQUE (telegram_id)"))
+            
+            # Re-create unique indexes for SQLModel to work correctly
             connection.execute(text("DROP INDEX IF EXISTS ix_students_phone"))
             connection.execute(text("DROP INDEX IF EXISTS ix_students_telegram_id"))
-            
-            # Create non-unique indexes for fast lookups
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_students_phone ON students (phone)"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_students_telegram_id ON students (telegram_id)"))
-            
-            # 4. Add composite uniqueness constraints
-            connection.execute(text(
-                "ALTER TABLE students ADD CONSTRAINT uq_students_tutor_phone UNIQUE (tutor_id, phone)"
-            ))
-            connection.execute(text(
-                "ALTER TABLE students ADD CONSTRAINT uq_students_tutor_telegram_id UNIQUE (tutor_id, telegram_id)"
-            ))
-
-        # Always check and repair unique indexes to be non-unique if they exist
-        indexes = inspector.get_indexes('students')
-        for index in indexes:
-            if index['name'] in ['ix_students_phone', 'ix_students_telegram_id'] and index['unique']:
-                connection.execute(text(f"DROP INDEX IF EXISTS {index['name']}"))
-                col_name = 'phone' if index['name'] == 'ix_students_phone' else 'telegram_id'
-                connection.execute(text(f"CREATE INDEX IF NOT EXISTS {index['name']} ON students ({col_name})"))
+            connection.execute(text("CREATE UNIQUE INDEX ix_students_phone ON students (phone)"))
+            connection.execute(text("CREATE UNIQUE INDEX ix_students_telegram_id ON students (telegram_id) WHERE telegram_id IS NOT NULL"))
 
 
 async def init_db() -> None:
