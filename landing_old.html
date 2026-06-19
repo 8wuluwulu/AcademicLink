@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>AcademicLink | Запись на занятие</title>
+    <!-- Premium Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-light: #818cf8;
+            --primary-glow: rgba(79, 70, 229, 0.15);
+            --bg: #f8fafc;
+            --card-bg: rgba(255, 255, 255, 0.85);
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --success: #10b981;
+            --error: #f43f5e;
+            --success-bg: #ecfdf5;
+            --error-bg: #fff1f2;
+            --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-heading: 'Outfit', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        body {
+            font-family: var(--font-main);
+            background: radial-gradient(circle at 0% 0%, #eef2ff 0%, #f8fafc 50%, #f1f5f9 100%);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 40px 16px;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 540px;
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        h1 {
+            font-family: var(--font-heading);
+            font-size: 32px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #312e81 0%, #4f46e5 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+
+        .tutor-name {
+            font-size: 16px;
+            color: var(--text-muted);
+            font-weight: 500;
+            background: #eef2ff;
+            padding: 6px 16px;
+            border-radius: 99px;
+            display: inline-block;
+            border: 1px solid rgba(79, 70, 229, 0.1);
+        }
+
+        .tutor-select-container {
+            margin-top: 12px;
+            display: none;
+            justify-content: center;
+        }
+
+        .select-wrapper {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .tutor-select-dropdown {
+            font-family: var(--font-main);
+            font-size: 15px;
+            font-weight: 600;
+            background: #ffffff;
+            color: var(--text-main);
+            padding: 8px 36px 8px 18px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .select-wrapper::after {
+            content: "";
+            width: 6px;
+            height: 6px;
+            border-right: 2px solid var(--text-muted);
+            border-bottom: 2px solid var(--text-muted);
+            transform: rotate(45deg);
+            position: absolute;
+            right: 18px;
+            pointer-events: none;
+            opacity: 0.8;
+            margin-top: -3px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .tutor-select-dropdown:hover {
+            border-color: var(--primary);
+            box-shadow: 0 6px 16px rgba(79, 70, 229, 0.08);
+            transform: translateY(-1px);
+        }
+
+        .select-wrapper:hover::after {
+            border-color: var(--primary);
+        }
+
+        .tutor-select-dropdown:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 24px;
+            padding: 36px;
+            box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.06),
+                0 0 0 1px rgba(226, 232, 240, 0.8);
+        }
+
+        .section-title {
+            font-family: var(--font-heading);
+            font-size: 17px;
+            font-weight: 700;
+            color: #1e1b4b;
+            margin-bottom: 18px;
+            margin-top: 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .section-title:first-of-type {
+            margin-top: 0;
+        }
+
+        .section-title span {
+            background: var(--primary);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 800;
+            box-shadow: 0 4px 10px rgba(79, 70, 229, 0.25);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+            margin-bottom: 8px;
+            letter-spacing: 0.2px;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 14px 18px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 500;
+            background-color: #fcfcfd;
+            font-family: var(--font-main);
+            color: var(--text-main);
+        }
+
+        input::placeholder {
+            color: #94a3b8;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--primary);
+            background-color: #ffffff;
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+
+        input:disabled {
+            background-color: #f1f5f9;
+            color: #64748b;
+            cursor: not-allowed;
+            border-color: #e2e8f0;
+        }
+
+        .tg-linked-badge {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--success);
+            font-weight: 600;
+            margin-top: 8px;
+            background: var(--success-bg);
+            padding: 8px 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .slots-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .slot-btn {
+            padding: 12px 8px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: #ffffff;
+            color: var(--text-main);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+        }
+
+        .slot-btn:hover {
+            border-color: var(--primary-light);
+            background: #fafafa;
+            transform: translateY(-1px);
+        }
+
+        .slot-btn.selected {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+            box-shadow: 0 8px 16px var(--primary-glow);
+        }
+
+        .no-slots {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 24px;
+            color: var(--text-muted);
+            background: #f8fafc;
+            border-radius: 14px;
+            border: 1px dashed var(--border);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Premium Payment Grid */
+        .pay-methods-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .pay-card {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: #ffffff;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-main);
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.01);
+        }
+
+        .pay-card input[type="radio"] {
+            display: none;
+        }
+
+        .pay-card:hover {
+            border-color: var(--primary-light);
+            background: #faf5ff;
+        }
+
+        .pay-card.active {
+            border-color: var(--primary);
+            background: rgba(79, 70, 229, 0.03);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+
+        .pay-icon {
+            font-size: 20px;
+        }
+
+        button.submit-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+            color: white;
+            border: none;
+            padding: 18px;
+            border-radius: 14px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 16px;
+            box-shadow: 0 10px 20px var(--primary-glow);
+        }
+
+        button.submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 14px 24px var(--primary-glow);
+        }
+
+        button.submit-btn:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        #status-msg {
+            margin-top: 24px;
+            padding: 16px 20px;
+            border-radius: 14px;
+            display: none;
+            font-size: 14px;
+            font-weight: 600;
+            text-align: center;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .status-success {
+            background-color: var(--success-bg);
+            color: #065f46;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-error {
+            background-color: var(--error-bg);
+            color: #991b1b;
+            border: 1px solid rgba(244, 63, 94, 0.2);
+        }
+
+        .loader {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2.5px solid rgba(255, 255, 255, .3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 0.8s infinite linear;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Custom Date Picker Styling */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            background: transparent;
+            bottom: 0;
+            color: transparent;
+            cursor: pointer;
+            height: auto;
+            left: 0;
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: auto;
+        }
+
+        .date-input-wrapper {
+            position: relative;
+        }
+
+        .date-input-wrapper::after {
+            content: "📅";
+            position: absolute;
+            right: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            font-size: 16px;
+        }
+
+        /* Modal Backdrop */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        /* Modal Container */
+        .modal-card {
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 32px;
+            width: 90%;
+            max-width: 440px;
+            box-shadow: 0 30px 60px -15px rgba(15, 23, 42, 0.2);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            transform: scale(0.95);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            text-align: center;
+        }
+
+        .modal-backdrop.show {
+            display: flex;
+        }
+
+        .modal-backdrop.show .modal-card {
+            transform: scale(1);
+        }
+
+        .modal-header {
+            font-family: var(--font-heading);
+            font-size: 20px;
+            font-weight: 750;
+            color: #1e1b4b;
+            margin-bottom: 8px;
+        }
+
+        .modal-amount {
+            font-size: 28px;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 18px;
+            font-family: var(--font-heading);
+        }
+
+        .sbp-qr-container {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto 20px auto;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #ffffff;
+            padding: 10px;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+        }
+
+        .sbp-qr-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .sbp-details-box {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            text-align: left;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .sbp-details-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .sbp-details-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .sbp-details-label {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .sbp-details-value {
+            font-weight: 600;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            color: var(--primary);
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary-glow);
+        }
+
+        .modal-input-group {
+            text-align: left;
+            margin-bottom: 24px;
+        }
+
+        .modal-input-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 8px;
+        }
+
+        .modal-input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1.5px solid var(--border);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        .modal-input-group input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+
+        .modal-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .modal-btn {
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .modal-btn-confirm {
+            background: var(--primary);
+            color: #ffffff;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .modal-btn-confirm:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 16px var(--primary-glow);
+        }
+
+        .modal-btn-cancel {
+            background: #f1f5f9;
+            color: #475569;
+        }
+
+        .modal-btn-cancel:hover {
+            background: #e2e8f0;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>AcademicLink</h1>
+            <div id="tutor-display" class="tutor-name">Загрузка профиля репетитора...</div>
+            <div id="tutor-select-container" class="tutor-select-container">
+                <div class="select-wrapper">
+                    <select id="tutor-select" class="tutor-select-dropdown">
+                        <!-- Populated dynamically if student has multiple tutors -->
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        <div class="card">
+            <form id="booking-form">
+                <!-- Section 1 -->
+                <div class="section-title"><span>1</span> Выбор услуги</div>
+                <div class="form-group">
+                    <select id="service" required>
+                        <option value="">Выберите учебную услугу...</option>
+                    </select>
+                </div>
+
+                <!-- Section 2 -->
+                <div class="section-title"><span>2</span> Дата и время урока</div>
+                <div class="form-group">
+                    <label for="date">Выберите дату</label>
+                    <div class="date-input-wrapper">
+                        <input type="date" id="date" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Доступное время начала</label>
+                    <div id="slots-grid" class="slots-container">
+                        <div class="no-slots">Сначала укажите услугу и желаемую дату</div>
+                    </div>
+                    <input type="hidden" id="selected-time" required>
+                </div>
+
+                <!-- Section 3 -->
+                <div class="section-title"><span>3</span> Контактные данные</div>
+                <div class="form-group">
+                    <label for="full-name">Ваше полное имя</label>
+                    <input type="text" id="full-name" placeholder="Иван Иванов" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="phone">Номер телефона</label>
+                    <input type="tel" id="phone" placeholder="+7 (999) 123-45-67" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="tg-user">Ваш Telegram @username (необязательно)</label>
+                    <input type="text" id="tg-user" placeholder="username">
+                    <div id="tg-linked-badge" class="tg-linked-badge">
+                        <span>🛡️ Авторизован через Telegram Web App</span>
+                    </div>
+                </div>
+
+                <!-- Section 4 -->
+                <div class="section-title"><span>4</span> Способ оплаты</div>
+                <div class="form-group">
+                    <div class="pay-methods-grid">
+                        <label class="pay-card active" id="pay-cash-label">
+                            <input type="radio" name="pay-method" value="cash" checked
+                                onchange="updatePaymentCard(this)">
+                            <span class="pay-icon">💵</span>
+                            <span>Наличными</span>
+                        </label>
+                        <label class="pay-card" id="pay-transfer-label">
+                            <input type="radio" name="pay-method" value="transfer" onchange="updatePaymentCard(this)">
+                            <span class="pay-icon">💳</span>
+                            <span>Перевод</span>
+                        </label>
+                    </div>
+                </div>
+
+                <button type="submit" class="submit-btn" id="submit-btn">Подтвердить и записаться</button>
+            </form>
+
+            <div id="status-msg"></div>
+        </div>
+    </div>
+
+    <script>
+        // Extract tutor_id from URL path: /book/123 (robust against trailing slashes)
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
+        let tutorId = pathParts[pathParts.length - 1];
+
+        const API_BASE = (window.location.protocol === 'file:' || !window.location.host) ? 'http://localhost:8000/api/v1' : (window.location.origin + '/api/v1');
+
+        // Helper to bypass ngrok browser warning on API calls
+        async function apiFetch(endpoint, options = {}) {
+            const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
+            const headers = {
+                ...(options.headers || {}),
+                'ngrok-skip-browser-warning': 'true'
+            };
+            return fetch(url, { ...options, headers });
+        }
+
+        const tutorDisplay = document.getElementById('tutor-display');
+        const serviceSelect = document.getElementById('service');
+        const dateInput = document.getElementById('date');
+        const slotsGrid = document.getElementById('slots-grid');
+        const selectedTimeInput = document.getElementById('selected-time');
+        const statusMsg = document.getElementById('status-msg');
+        const submitBtn = document.getElementById('submit-btn');
+        const tgLinkedBadge = document.getElementById('tg-linked-badge');
+        const tgUserInput = document.getElementById('tg-user');
+
+        const today = new Date().toISOString().split('T')[0];
+        dateInput.setAttribute('min', today);
+        dateInput.value = today;
+
+        let tutorData = null;
+        let tgUsername = null;
+        let tgUserId = null;
+
+        // Initialize Telegram WebApp SDK
+        const tg = window.Telegram ? window.Telegram.WebApp : null;
+        if (tg) {
+            try {
+                tg.ready();
+                tg.expand();
+            } catch (e) {
+                console.error("Error initializing Telegram WebApp:", e);
+            }
+        }
+
+        async function loadTutorData(id) {
+            try {
+                // Fetch Tutor Info
+                const tRes = await apiFetch(`/tutors/${id}`);
+                if (!tRes.ok) throw new Error();
+                tutorData = await tRes.json();
+                
+                tutorDisplay.textContent = 'Репетитор: ' + tutorData.name;
+
+                // Dynamically update primary brand colors matching tutor configuration
+                if (tutorData.accent_color) {
+                    try {
+                        document.documentElement.style.setProperty('--primary', tutorData.accent_color);
+                        document.documentElement.style.setProperty('--primary-glow', tutorData.accent_color + '26');
+                    } catch (colorErr) {
+                        console.error("Error setting custom accent colors:", colorErr);
+                    }
+                }
+
+                // Fetch Services
+                const sRes = await apiFetch(`/tutors/${id}/services`);
+                const services = await sRes.json();
+                serviceSelect.innerHTML = '<option value="">Выберите учебную услугу...</option>' +
+                    services.map(s => `<option value="${s.id}" data-price="${s.price || 0}" data-name="${s.name}">${s.name} (${s.duration} мин) ${s.price ? '— ' + s.price + ' ₽' : ''}</option>`).join('');
+
+                // Clear previous slot selections
+                slotsGrid.innerHTML = '<div class="no-slots">Выберите услугу для просмотра доступного времени</div>';
+                selectedTimeInput.value = '';
+                submitBtn.disabled = true;
+
+                // Trigger slot refetch if date/service are selected
+                fetchSlots();
+            } catch (err) {
+                console.error("Error loading tutor data:", err);
+                const fetchUrl = `${API_BASE}/tutors/${id}`;
+                tutorDisplay.textContent = `Ошибка (ID: ${id}, API: ${fetchUrl}, Error: ${err.message || err}, Stack: ${err.stack ? err.stack.toString().substring(0, 150) : 'no stack'})`;
+                tutorDisplay.style.background = '#fef2f2';
+                tutorDisplay.style.color = '#ef4444';
+            }
+        }
+
+        async function init() {
+            console.log("Initializing booking page...");
+            console.log("Current URL:", window.location.href);
+
+            // 1. Try reading from URL Query parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramUsername = urlParams.get('tg_username');
+            const paramUserId = urlParams.get('tg_id');
+            console.log("URL params - tg_username:", paramUsername, "tg_id:", paramUserId);
+
+            if (paramUsername && paramUsername !== 'None' && paramUsername !== 'null') {
+                tgUsername = paramUsername;
+            }
+            if (paramUserId && paramUserId !== 'None' && paramUserId !== 'null') {
+                tgUserId = parseInt(paramUserId);
+            }
+
+            // 2. Try reading from Telegram WebApp SDK
+            if (tg) {
+                console.log("Telegram WebApp SDK detected.");
+                console.log("tg.initDataUnsafe:", tg.initDataUnsafe);
+                if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                    const user = tg.initDataUnsafe.user;
+                    console.log("Telegram User details from SDK:", user);
+                    if (user.username) {
+                        tgUsername = user.username;
+                    }
+                    if (user.id) {
+                        tgUserId = user.id;
+                    }
+                    // Pre-populate student name from TG
+                    const nameInput = document.getElementById('full-name');
+                    if (nameInput && !nameInput.value) {
+                        nameInput.value = [user.first_name, user.last_name].filter(Boolean).join(' ');
+                    }
+                }
+            }
+
+            // 3. Fallback to localStorage if still not found
+            if (!tgUserId) {
+                const cachedId = localStorage.getItem('al_telegram_id');
+                if (cachedId) tgUserId = parseInt(cachedId);
+            }
+            if (!tgUsername) {
+                tgUsername = localStorage.getItem('al_telegram_username');
+            }
+
+            console.log("Final resolved tgUsername:", tgUsername, "tgUserId:", tgUserId);
+
+            if (!tutorId || isNaN(tutorId)) {
+                tutorDisplay.textContent = 'Ошибка: Репетитор не найден';
+                tutorDisplay.style.background = '#fef2f2';
+                tutorDisplay.style.color = '#ef4444';
+                return;
+            }
+
+            // Auto-populate username if found
+            if (tgUsername) {
+                tgUserInput.value = tgUsername;
+                tgUserInput.disabled = true; // Lock field
+                tgLinkedBadge.innerHTML = '<span>🛡️ Авторизован через Telegram</span>';
+                tgLinkedBadge.style.display = 'flex';
+            } else if (tgUserId) {
+                tgLinkedBadge.innerHTML = '<span>🛡️ Подключен через Telegram ID</span>';
+                tgLinkedBadge.style.display = 'flex';
+            }
+
+            // Load initial tutor details and services
+            await loadTutorData(tutorId);
+
+            // Fetch other tutors associated with the student to render dropdown
+            if (tgUserId) {
+                fetchTutors('telegram_id=' + tgUserId);
+            }
+
+            // Add change listener to phone input to fetch tutors by phone
+            const phoneInput = document.getElementById('phone');
+            if (phoneInput) {
+                phoneInput.addEventListener('change', () => {
+                    const cleanPhone = phoneInput.value.replace(/[^0-9]/g, '');
+                    if (cleanPhone.length >= 10) {
+                        fetchTutors('phone=' + cleanPhone);
+                    }
+                });
+            }
+
+            // Load saved contacts from localStorage (populates phone and fetches tutors)
+            loadSavedStudentContacts();
+
+            // Set up date/service change listeners once
+            serviceSelect.addEventListener('change', fetchSlots);
+            dateInput.addEventListener('change', fetchSlots);
+        }
+
+        function setupTutorsDropdown(tutorsList) {
+            const container = document.getElementById('tutor-select-container');
+            const select = document.getElementById('tutor-select');
+            
+            tutorDisplay.style.display = 'none';
+            container.style.display = 'flex';
+            
+            select.innerHTML = tutorsList.map(t => 
+                `<option value="${t.id}" ${parseInt(t.id) === parseInt(tutorId) ? 'selected' : ''}>${t.name}</option>`
+            ).join('');
+            
+            select.onchange = async (e) => {
+                const newTutorId = e.target.value;
+                tutorId = newTutorId;
+                
+                // Update URL path using history.pushState so that refresh/bookmark works
+                const newPath = `/book/${newTutorId}`;
+                const newUrl = `${window.location.protocol}//${window.location.host}${newPath}${window.location.search}`;
+                window.history.pushState({ path: newUrl }, '', newUrl);
+                
+                // Fetch the new tutor's details and services in-place
+                await loadTutorData(newTutorId);
+            };
+        }
+
+        let tutorsLoaded = false;
+        async function fetchTutors(query) {
+            if (tutorsLoaded) return;
+            try {
+                const tutorsRes = await apiFetch(`/tutors/by-student?${query}`);
+                if (tutorsRes.ok) {
+                    const tutorsList = await tutorsRes.json();
+                    const hasCurrent = tutorsList.some(t => parseInt(t.id) === parseInt(tutorId));
+                    let combinedList = [...tutorsList];
+                    if (!hasCurrent && tutorData) {
+                        combinedList.push(tutorData);
+                    }
+                    if (combinedList.length > 1) {
+                        setupTutorsDropdown(combinedList);
+                        tutorsLoaded = true;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading tutors list:", e);
+            }
+        }
+
+        function loadSavedStudentContacts() {
+            try {
+                const savedName = localStorage.getItem('al_full_name');
+                const savedPhone = localStorage.getItem('al_phone');
+                
+                if (savedName) {
+                    const nameInput = document.getElementById('full-name');
+                    if (nameInput && !nameInput.value) {
+                        nameInput.value = savedName;
+                    }
+                }
+                
+                if (savedPhone) {
+                    const phoneInput = document.getElementById('phone');
+                    if (phoneInput && !phoneInput.value) {
+                        phoneInput.value = formatPhone(savedPhone);
+                    }
+                    fetchTutors('phone=' + savedPhone);
+                }
+            } catch (e) {
+                console.error("Error reading from localStorage:", e);
+            }
+        }
+
+        function formatPhone(digits) {
+            if (digits.startsWith('7') && digits.length === 11) {
+                return `+7 (${digits.slice(1,4)}) ${digits.slice(4,7)}-${digits.slice(7,9)}-${digits.slice(9,11)}`;
+            }
+            return '+' + digits;
+        }
+
+        async function fetchSlots() {
+            const serviceId = serviceSelect.value;
+            const date = dateInput.value;
+            if (!serviceId || !date) return;
+
+            slotsGrid.innerHTML = '<div class="no-slots"><span class="loader" style="border-top-color: var(--primary);"></span> Поиск свободных окон...</div>';
+            selectedTimeInput.value = '';
+            submitBtn.disabled = true;
+
+            try {
+                const res = await apiFetch(`/tutors/${tutorId}/slots?service_id=${serviceId}&date=${date}`);
+                const data = await res.json();
+
+                if (data.available_slots && data.available_slots.length > 0) {
+                    slotsGrid.innerHTML = data.available_slots.map(slot =>
+                        `<button type="button" class="slot-btn" onclick="selectSlot(this, '${slot}')">${slot}</button>`
+                    ).join('');
+                } else {
+                    slotsGrid.innerHTML = '<div class="no-slots">Нет свободных окон на выбранный день</div>';
+                }
+            } catch (err) {
+                slotsGrid.innerHTML = '<div class="no-slots">Ошибка загрузки времени</div>';
+            }
+        }
+
+        window.selectSlot = (btn, time) => {
+            document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            selectedTimeInput.value = time;
+            submitBtn.disabled = false;
+        };
+
+        window.updatePaymentCard = (radio) => {
+            document.getElementById('pay-cash-label').classList.remove('active');
+            document.getElementById('pay-transfer-label').classList.remove('active');
+            radio.parentElement.classList.add('active');
+        };
+
+        // NOTE: Event listeners for serviceSelect/dateInput are registered
+        // inside init() — no duplicates here.
+
+        let pendingPayload = null;
+
+        window.copyText = (text, btn) => {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = 'Скопировано!';
+                setTimeout(() => btn.textContent = originalText, 1500);
+            }).catch(err => {
+                alert('Не удалось скопировать. Скопируйте вручную: ' + text);
+            });
+        };
+
+        window.closePaymentModal = () => {
+            document.getElementById('sbp-modal').classList.remove('show');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Подтвердить и записаться';
+            pendingPayload = null;
+        };
+
+        window.confirmPaymentAndSubmit = async () => {
+            const payerNameInput = document.getElementById('payer-name');
+            const payerName = payerNameInput.value.trim();
+            if (!payerName) {
+                alert('Пожалуйста, введите имя отправителя перевода для сверки!');
+                payerNameInput.focus();
+                return;
+            }
+
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<span class="loader"></span> Отправка...';
+
+            pendingPayload.payment_comment = payerName;
+
+            await submitBookingPayload(pendingPayload);
+        };
+
+        async function submitBookingPayload(payload) {
+            try {
+                const res = await apiFetch(`/bookings/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showStatus('✅ Вы успешно записаны! Заявка отправлена на подтверждение.', 'success');
+                    
+                    try {
+                        localStorage.setItem('al_full_name', payload.full_name);
+                        const cleanPhone = (payload.phone || '').replace(/[^0-9]/g, '');
+                        if (cleanPhone) {
+                            localStorage.setItem('al_phone', cleanPhone);
+                        }
+                        if (payload.telegram_id) {
+                            localStorage.setItem('al_telegram_id', payload.telegram_id);
+                        }
+                        if (payload.telegram_username) {
+                            localStorage.setItem('al_telegram_username', payload.telegram_username);
+                        }
+                    } catch (e) {
+                        console.error("Error saving to localStorage:", e);
+                    }
+
+                    document.getElementById('booking-form').reset();
+                    const payerNameInput = document.getElementById('payer-name');
+                    if (payerNameInput) payerNameInput.value = '';
+                    fetchSlots();
+
+                    // Close modal if open
+                    document.getElementById('sbp-modal').classList.remove('show');
+
+                    // If opened inside Telegram WebApp, automatically close the window
+                    if (tg) {
+                        setTimeout(() => {
+                            tg.close();
+                        }, 1600);
+                    }
+                } else {
+                    const data = await res.json();
+                    let errorMsg = 'неизвестно';
+                    if (data && data.detail) {
+                        if (typeof data.detail === 'string') {
+                            errorMsg = data.detail;
+                        } else if (Array.isArray(data.detail)) {
+                            errorMsg = data.detail.map(err => {
+                                const field = err.loc ? err.loc[err.loc.length - 1] : 'поле';
+                                return `${field}: ${err.msg}`;
+                            }).join(', ');
+                        } else if (typeof data.detail === 'object') {
+                            errorMsg = JSON.stringify(data.detail);
+                        }
+                    }
+                    alert('❌ Ошибка записи: ' + errorMsg);
+                    showStatus('❌ Ошибка записи: ' + errorMsg, 'error');
+                }
+            } catch (err) {
+                alert('❌ Сетевая ошибка при отправке запроса');
+                showStatus('❌ Сетевая ошибка при отправке запроса', 'error');
+            } finally {
+                const confirmBtn = document.getElementById('modal-confirm-btn');
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.innerHTML = 'Я оплатил(а)';
+                }
+                
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'Подтвердить и записаться';
+                pendingPayload = null;
+            }
+        }
+
+        document.getElementById('booking-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const time = selectedTimeInput.value;
+            if (!time) { alert('Пожалуйста, выберите доступное время занятия!'); return; }
+
+            const serviceOpt = serviceSelect.options[serviceSelect.selectedIndex];
+            const serviceName = serviceOpt.getAttribute('data-name') || '';
+            const servicePrice = parseInt(serviceOpt.getAttribute('data-price') || '0');
+
+            // Clean phone number format for API regex matching
+            let rawPhone = document.getElementById('phone').value.trim();
+            let digits = rawPhone.replace(/\D/g, '');
+            if (digits.length === 11 && digits.startsWith('8')) {
+                digits = '7' + digits.slice(1);
+            } else if (digits.length === 10) {
+                digits = '7' + digits;
+            }
+            const cleanPhone = digits ? '+' + digits : '';
+
+            // Clean Telegram username format
+            let rawUsername = (tgUsername || tgUserInput.value || '').trim();
+            let formattedUsername = rawUsername.replace(/^@/, '') || null;
+
+            const payload = {
+                full_name: document.getElementById('full-name').value.trim(),
+                phone: cleanPhone,
+                service_id: parseInt(serviceSelect.value),
+                // BUG #007 fix: Send the raw date+time as-is (already in MSK from server slots).
+                // Do NOT use `new Date()` which would reinterpret in the browser's local timezone.
+                appointment_time: `${dateInput.value}T${time}:00`,
+                tutor_id: parseInt(tutorId),
+                telegram_username: formattedUsername,
+                telegram_id: tgUserId || null,
+                payment_method: document.querySelector('input[name="pay-method"]:checked').value,
+                payment_comment: null
+            };
+
+            // Check if SBP transfer payment method is chosen and price > 0
+            if (payload.payment_method === 'transfer' && servicePrice > 0 && tutorData) {
+                pendingPayload = payload;
+                
+                // Populate SBP modal details
+                document.getElementById('modal-service-name').textContent = serviceName;
+                document.getElementById('modal-amount-display').textContent = `${servicePrice} ₽`;
+                document.getElementById('modal-tutor-name').textContent = tutorData.name;
+                
+                // Handle SBP Phone
+                const sbpPhoneVal = tutorData.sbp_phone || '';
+                const phoneRow = document.getElementById('modal-phone-row');
+                if (sbpPhoneVal) {
+                    document.getElementById('modal-sbp-phone').textContent = sbpPhoneVal;
+                    phoneRow.style.display = 'flex';
+                } else {
+                    phoneRow.style.display = 'none';
+                }
+
+                // Handle SBP Bank
+                const sbpBankVal = tutorData.sbp_bank || '';
+                const bankRow = document.getElementById('modal-bank-row');
+                if (sbpBankVal) {
+                    document.getElementById('modal-sbp-bank').textContent = sbpBankVal;
+                    bankRow.style.display = 'flex';
+                } else {
+                    bankRow.style.display = 'none';
+                }
+
+                // Simplified SBP logic: No QR code generation needed
+
+                // Show modal
+                document.getElementById('sbp-modal').classList.add('show');
+            } else {
+                // If cash or price is 0, submit directly
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="loader"></span> Оформление записи...';
+                await submitBookingPayload(payload);
+            }
+        });
+
+        function showStatus(msg, type) {
+            statusMsg.textContent = msg;
+            statusMsg.className = `status-${type}`;
+            statusMsg.style.display = 'block';
+        }
+
+        init();
+    </script>
+
+    <!-- SBP Payment Modal -->
+    <div id="sbp-modal" class="modal-backdrop">
+        <div class="modal-card">
+            <div class="modal-header">Оплата перевода СБП</div>
+            <div id="modal-service-name" style="font-size: 14px; color: var(--text-muted); margin-bottom: 6px;"></div>
+            <div class="modal-amount" id="modal-amount-display">0 ₽</div>
+
+            <!-- QR code removed -->
+
+            <div class="sbp-details-box">
+                <div class="sbp-details-row">
+                    <span class="sbp-details-label">Получатель</span>
+                    <span class="sbp-details-value" id="modal-tutor-name">Имя</span>
+                </div>
+                <div class="sbp-details-row" id="modal-phone-row">
+                    <span class="sbp-details-label">Телефон СБП</span>
+                    <span class="sbp-details-value">
+                        <span id="modal-sbp-phone">+7...</span>
+                        <button type="button" class="copy-btn" onclick="copyText(document.getElementById('modal-sbp-phone').textContent, this)">Копировать</button>
+                    </span>
+                </div>
+                <div class="sbp-details-row" id="modal-bank-row">
+                    <span class="sbp-details-label">Банк</span>
+                    <span class="sbp-details-value" id="modal-sbp-bank">Банк</span>
+                </div>
+            </div>
+
+            <div class="modal-input-group">
+                <label for="payer-name">Имя отправителя перевода для проверки</label>
+                <input type="text" id="payer-name" placeholder="Иван И." required>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="modal-btn modal-btn-cancel" onclick="closePaymentModal()">Назад к выбору</button>
+                <button type="button" class="modal-btn modal-btn-confirm" id="modal-confirm-btn" onclick="confirmPaymentAndSubmit()">Я оплатил(а)</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

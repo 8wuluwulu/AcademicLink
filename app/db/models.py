@@ -155,6 +155,11 @@ class Tutor(SQLModel, table=True):
         max_length=50,
         description="Subscription status: trial, active, or expired",
     )
+    subscription_warned_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        description="When the last subscription renewal alert was sent (NULL = not sent)",
+    )
 
     # ── Tutor Business Card (Landing Page) & SBP Details ─────────────
     bio: str | None = Field(
@@ -173,7 +178,7 @@ class Tutor(SQLModel, table=True):
         description="URL of the tutor's photo / avatar",
     )
     accent_color: str = Field(
-        default="#4f46e5",
+        default="#0284C7",
         max_length=10,
         description="Hex code of the accent color for landing page custom theme",
     )

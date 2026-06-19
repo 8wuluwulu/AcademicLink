@@ -58,6 +58,14 @@ class Settings(BaseSettings):
         default=None,
         description="Platform admin Telegram ID (for /extend_sub command)",
     )
+    admin_sbp_phone: str | None = PydanticField(
+        default=None,
+        description="Platform admin SBP phone number",
+    )
+    admin_sbp_bank: str | None = PydanticField(
+        default=None,
+        description="Platform admin preferred SBP bank name",
+    )
 
     # --- Runtime ---
     environment: str = "development"

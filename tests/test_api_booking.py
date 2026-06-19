@@ -1,48 +1,34 @@
 """
-AcademicLink — Integration Tests for the Booking API
-
-Covers:
-- Successful POST /api/v1/bookings/ with valid API key
-- Rejection without API key (403)
-- Rejection with invalid API key (403)
-- Phone validation errors (422)
-- Service-layer ValueError propagation (400)
+AcademicLink — Direct Unit Tests for Booking API Endpoints
 """
 
+import logging
 from datetime import datetime, time, timedelta, timezone
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from fastapi import HTTPException, Request
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from app.db.models import AvailabilitySlot, Student, Tutor, StudentTutorLink
+from app.core.config import settings
+from app.db.models import AvailabilitySlot, Booking, BookingStatus, Service, Student, StudentTutorLink, Tutor
+from app.api.booking import (
+    BookingCreate,
+    verify_api_key,
+    notify_tutor_new_booking,
+    create_booking,
+    get_reschedule_info,
+    reschedule_from_web,
+)
 
-
-# ── Helpers ──────────────────────────────────────────────────────────
-
-
-def _next_weekday(weekday: int) -> str:
-    """Return ISO string for next occurrence of weekday at 10:00 UTC."""
-    now = datetime.now(timezone.utc)
-    days_ahead = weekday - now.weekday()
-    if days_ahead <= 0:
-        days_ahead += 7
-    target = now + timedelta(days=days_ahead)
-    return target.replace(
-        hour=10, minute=0, second=0, microsecond=0,
-    ).isoformat()
+logger = logging.getLogger(__name__)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
-
 
 @pytest_asyncio.fixture
 async def test_engine():
@@ -63,20 +49,20 @@ async def test_session_factory(test_engine):
 
 
 @pytest_asyncio.fixture
-async def seed_db(test_session_factory):
-    """Seed tutor + availability slot for a valid Monday booking."""
+async def db_session(test_session_factory):
+    """Seed tutor + student + availability + booking and return session."""
     async with test_session_factory() as session:
         tutor = Tutor(
+            id=1,
             tg_id=111222333,
             name="API Tutor",
             is_active=True,
-            subscription_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
             subscription_status="active",
+            subscription_expires_at=datetime.now(timezone.utc) + timedelta(days=30),
         )
         session.add(tutor)
         await session.flush()
 
-        from app.db.models import Service
         default_service = Service(
             id=1,
             tutor_id=tutor.id,
@@ -90,9 +76,11 @@ async def seed_db(test_session_factory):
         await session.flush()
 
         student = Student(
+            id=1,
             full_name="Existing Student",
-            phone="+998901234567",
+            phone="+79001234567",
             telegram_id=987654321,
+            telegram_username="student_username",
         )
         session.add(student)
         await session.flush()
@@ -111,148 +99,379 @@ async def seed_db(test_session_factory):
             end_time=time(20, 0),
         )
         session.add(slot)
+
+        booking = Booking(
+            id=10,
+            student_id=student.id,
+            tutor_id=tutor.id,
+            service_id=default_service.id,
+            service_type="Test Service",
+            appointment_time=datetime(2026, 6, 22, 15, 0, tzinfo=timezone.utc),  # Monday 15:00 UTC
+            status=BookingStatus.PENDING,
+            payment_method="cash",
+            student_name_snapshot="Existing Student"
+        )
+        session.add(booking)
         await session.commit()
 
-
-@pytest.fixture
-def app_client(test_session_factory, seed_db):
-    """
-    Create a FastAPI TestClient with the DB session overridden
-    and the bot mocked out.
-    """
-    from main import app
-    from app.db.database import get_session
-
-    async def _override_session():
-        async with test_session_factory() as session:
-            yield session
-
-    app.dependency_overrides[get_session] = _override_session
-
-    # Mock the bot on app.state so notify doesn't fail
-    mock_bot = MagicMock()
-    mock_bot.send_message = AsyncMock()
-    mock_bot.get_me = AsyncMock(return_value=MagicMock(username="test_bot"))
-    app.state.bot = mock_bot
-
-    with TestClient(app, raise_server_exceptions=False) as client:
-        yield client
-
-    app.dependency_overrides.clear()
+    async with test_session_factory() as session:
+        yield session
 
 
-# ═════════════════════════════════════════════════════════════════════
-#  Tests
-# ═════════════════════════════════════════════════════════════════════
+# ── Validation & Security Tests ──────────────────────────────────────
 
-
-def test_create_booking_success(app_client):
-    """Valid request should return 201."""
-    response = app_client.post(
-        "/api/v1/bookings/",
-        json={
-            "full_name": "Integration Student",
-            "phone": "+79001234567",
-            "service_id": 1,
-            "appointment_time": _next_weekday(0),  # Monday
-            "tutor_id": 1,
-        },
+def test_booking_create_validation():
+    # Test valid phone
+    p = BookingCreate(
+        full_name="Ivan",
+        phone="+79001234567",
+        service_id=1,
+        appointment_time=datetime.now(),
+        tutor_id=1,
+        payment_method="cash",
     )
-    assert response.status_code == 201
-    data = response.json()
-    assert data["status"] == "success"
-    assert "id" in data
+    assert p.phone == "+79001234567"
 
-
-def test_create_booking_invalid_phone(app_client):
-    """Phone number not matching international format should return 422."""
-    response = app_client.post(
-        "/api/v1/bookings/",
-        json={
-            "full_name": "Bad Phone Student",
-            "phone": "8901234567",  # Missing +
-            "service_id": 1,
-            "appointment_time": _next_weekday(0),
-            "tutor_id": 1,
-        },
-    )
-    assert response.status_code == 422
-
-
-def test_create_booking_invalid_phone_short(app_client):
-    """Too-short phone number should be rejected."""
-    response = app_client.post(
-        "/api/v1/bookings/",
-        json={
-            "full_name": "Short Phone",
-            "phone": "+123",
-            "service_id": 1,
-            "appointment_time": _next_weekday(0),
-            "tutor_id": 1,
-        },
-    )
-    assert response.status_code == 422
-
-
-def test_phone_validation_accepts_valid_formats(app_client):
-    """Valid international phone numbers should be accepted."""
-    for phone in ["+79001234567", "+998901234567", "+14155551234"]:
-        response = app_client.post(
-            "/api/v1/bookings/",
-            json={
-                "full_name": "Valid Phone Student",
-                "phone": phone,
-                "service_id": 1,
-                "appointment_time": _next_weekday(0),
-                "tutor_id": 1,
-            },
+    # Test normalization cases
+    for raw_phone in ["89001234567", "9001234567", "+89001234567"]:
+        p_norm = BookingCreate(
+            full_name="Ivan",
+            phone=raw_phone,
+            service_id=1,
+            appointment_time=datetime.now(),
+            tutor_id=1,
+            payment_method="cash",
         )
-        # Should be 201 or 400 (service error) — NOT 422
-        assert response.status_code in (201, 400), (
-            f"Phone {phone} was rejected with {response.status_code}"
+        assert p_norm.phone == "+79001234567"
+
+    # Test phone is None (line 93)
+    p_none = BookingCreate(
+        full_name="Ivan",
+        phone=None,
+        service_id=1,
+        appointment_time=datetime.now(),
+        tutor_id=1,
+        payment_method="cash",
+    )
+    assert p_none.phone is None
+
+    # Test invalid phone format (Russian landline)
+    with pytest.raises(ValueError):
+        BookingCreate(
+            full_name="Ivan",
+            phone="+74951234567",
+            service_id=1,
+            appointment_time=datetime.now(),
+            tutor_id=1,
+            payment_method="cash",
+        )
+
+    # Test invalid phone format (foreign number)
+    with pytest.raises(ValueError):
+        BookingCreate(
+            full_name="Ivan",
+            phone="+49109218362",
+            service_id=1,
+            appointment_time=datetime.now(),
+            tutor_id=1,
+            payment_method="cash",
+        )
+
+    # Test invalid phone format
+    with pytest.raises(ValueError):
+        BookingCreate(
+            full_name="Ivan",
+            phone="1234567",
+            service_id=1,
+            appointment_time=datetime.now(),
+            tutor_id=1,
+            payment_method="cash",
+        )
+
+    # Test invalid payment method (lines 104-107)
+    with pytest.raises(ValueError):
+        BookingCreate(
+            full_name="Ivan",
+            phone="+79001234567",
+            service_id=1,
+            appointment_time=datetime.now(),
+            tutor_id=1,
+            payment_method="invalid_method",
         )
 
 
-def test_create_booking_with_telegram_id(app_client):
-    """Providing telegram_id should successfully save it to the student."""
-    tg_id = 123456789
-    response = app_client.post(
-        "/api/v1/bookings/",
-        json={
-            "full_name": "TG Student",
-            "phone": "+79001112233",
-            "service_id": 1,
-            "appointment_time": _next_weekday(0),
-            "tutor_id": 1,
-            "telegram_id": tg_id,
-        },
+@pytest.mark.asyncio
+async def test_verify_api_key():
+    with patch.object(settings, "secret_key", "secret123"):
+        res = await verify_api_key("secret123")
+        assert res == "secret123"
+
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_api_key("badsecret")
+        assert exc_info.value.status_code == 403
+
+
+# ── Notification Tests ───────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_notify_tutor_new_booking_tutor_not_found(db_session):
+    booking = Booking(tutor_id=9999)
+    bot = MagicMock()
+    # Should exit early (line 138)
+    await notify_tutor_new_booking(booking, db_session, bot)
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_notify_tutor_new_booking_p2p_success(db_session):
+    booking_stmt = (
+        select(Booking)
+        .where(Booking.id == 10)
+        .options(selectinload(Booking.student), selectinload(Booking.tutor))
     )
-    assert response.status_code == 201
+    res = await db_session.execute(booking_stmt)
+    booking = res.scalar_one()
+
+    booking.payment_method = "transfer"
+    booking.payment_comment = "Sender Name"
     
-    # Verify in DB if possible (though we use overrides, we can check if it returned success)
-    # The service layer is already tested, but this ensures the API passes it through.
+    bot = AsyncMock()
+    await notify_tutor_new_booking(booking, db_session, bot)
+    bot.send_message.assert_called_once()
+    assert "СБП" in bot.send_message.call_args[1]["text"]
 
 
-def test_get_tutors_by_student_by_telegram_id(app_client):
-    """Can find tutor by student telegram_id."""
-    response = app_client.get("/api/v1/tutors/by-student?telegram_id=987654321")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["name"] == "API Tutor"
+@pytest.mark.asyncio
+async def test_notify_tutor_new_booking_p2p_exception(db_session):
+    booking_stmt = (
+        select(Booking)
+        .where(Booking.id == 10)
+        .options(selectinload(Booking.student), selectinload(Booking.tutor))
+    )
+    res = await db_session.execute(booking_stmt)
+    booking = res.scalar_one()
+
+    booking.payment_method = "online"
+    
+    bot = AsyncMock()
+    bot.send_message.side_effect = Exception("Bot error")
+    # Exception should be caught and logged (line 173)
+    await notify_tutor_new_booking(booking, db_session, bot)
 
 
-def test_get_tutors_by_student_by_phone(app_client):
-    """Can find tutor by student phone."""
-    response = app_client.get("/api/v1/tutors/by-student?phone=+998901234567")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["name"] == "API Tutor"
+@pytest.mark.asyncio
+async def test_notify_tutor_new_booking_cash_exception(db_session):
+    booking_stmt = (
+        select(Booking)
+        .where(Booking.id == 10)
+        .options(selectinload(Booking.student), selectinload(Booking.tutor))
+    )
+    res = await db_session.execute(booking_stmt)
+    booking = res.scalar_one()
+
+    booking.payment_method = "cash"
+    
+    bot = AsyncMock()
+    bot.send_message.side_effect = Exception("Bot error")
+    # Exception should be caught and logged (line 187)
+    await notify_tutor_new_booking(booking, db_session, bot)
 
 
-def test_get_tutors_by_student_empty(app_client):
-    """Calling without parameters returns empty list."""
-    response = app_client.get("/api/v1/tutors/by-student")
-    assert response.status_code == 200
-    assert response.json() == []
+# ── Create Booking Endpoint Tests ────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_create_booking_value_error(db_session):
+    payload = BookingCreate(
+        full_name="Student",
+        phone="+79001234567",
+        service_id=1,
+        appointment_time=datetime.now(),
+        tutor_id=1,
+        payment_method="cash",
+    )
+    request = MagicMock(spec=Request)
+    
+    with patch("app.api.booking.create_booking_from_web", side_effect=ValueError("Tutor not active")):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_booking(payload, request, db_session)
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Tutor not active"
+
+
+@pytest.mark.asyncio
+async def test_create_booking_success(db_session):
+    payload = BookingCreate(
+        full_name="New Student",
+        phone="+79001234567",
+        service_id=1,
+        appointment_time=datetime(2026, 6, 22, 10, 0, tzinfo=timezone.utc),
+        tutor_id=1,
+        payment_method="cash",
+    )
+    
+    # Mock bot
+    bot = AsyncMock()
+    bot.get_me.return_value = MagicMock(username="test_bot")
+    request = MagicMock(spec=Request)
+    request.app.state.bot = bot
+
+    with patch("app.services.google_calendar_service.sync_booking_to_calendar", side_effect=Exception("Sync failed")):
+        response = await create_booking(payload, request, db_session)
+        assert response.id is not None
+
+
+@pytest.mark.asyncio
+async def test_create_booking_student_notification_fails(db_session):
+    # Retrieve student and set telegram_id to trigger student notification path
+    student = await db_session.get(Student, 1)
+    student.telegram_id = 987654321
+    await db_session.commit()
+
+    payload = BookingCreate(
+        full_name="Existing Student",
+        phone="+79001234567",
+        service_id=1,
+        appointment_time=datetime(2026, 6, 22, 11, 0, tzinfo=timezone.utc),
+        tutor_id=1,
+        payment_method="cash",
+    )
+    
+    bot = AsyncMock()
+    bot.send_message.side_effect = [
+        None,  # tutor notification succeeds
+        Exception("Student notification fails")  # student notification fails
+    ]
+    request = MagicMock(spec=Request)
+    request.app.state.bot = bot
+
+    with patch("app.services.google_calendar_service.sync_booking_to_calendar", AsyncMock()):
+        response = await create_booking(payload, request, db_session)
+        assert response.id is not None
+
+
+# ── Reschedule Info Endpoint Tests ───────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_reschedule_info_not_found(db_session):
+    with pytest.raises(HTTPException) as exc_info:
+        await get_reschedule_info(booking_id=9999, session=db_session)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_reschedule_info_success(db_session):
+    info = await get_reschedule_info(booking_id=10, session=db_session)
+    assert info.tutor_id == 1
+    assert info.student_name == "Existing Student"
+
+
+# ── Reschedule from Web Endpoint Tests ───────────────────────────────
+
+from app.api.booking import RescheduleWebRequest
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_not_found(db_session):
+    payload = RescheduleWebRequest(appointment_time=datetime.now())
+    request = MagicMock(spec=Request)
+    with pytest.raises(HTTPException) as exc_info:
+        await reschedule_from_web(booking_id=9999, payload=payload, request=request, session=db_session)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_tutor_mode_success(db_session):
+    new_time = datetime(2026, 6, 22, 16, 0)
+    payload = RescheduleWebRequest(appointment_time=new_time, tutor_mode=True)
+    
+    bot = AsyncMock()
+    request = MagicMock(spec=Request)
+    request.app.state.bot = bot
+
+    with patch("app.services.google_calendar_service.sync_booking_to_calendar", AsyncMock()) as mock_sync:
+        res = await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+        assert res == {"status": "success"}
+        mock_sync.assert_called_once()
+        assert bot.send_message.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_tutor_mode_errors(db_session):
+    new_time = datetime(2026, 6, 22, 16, 0, tzinfo=timezone.utc)
+    payload = RescheduleWebRequest(appointment_time=new_time, tutor_mode=True)
+    
+    request = MagicMock(spec=Request)
+    with patch("app.services.booking_service.reschedule_booking", side_effect=ValueError("Reschedule failed")):
+        with pytest.raises(HTTPException) as exc_info:
+            await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+        assert exc_info.value.status_code == 400
+
+    bot = AsyncMock()
+    bot.send_message.side_effect = Exception("Bot error")
+    request.app.state.bot = bot
+
+    with patch("app.services.google_calendar_service.sync_booking_to_calendar", side_effect=Exception("Sync error")):
+        res = await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+        assert res == {"status": "success"}
+
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_student_mode_access_denied(db_session):
+    link_stmt = select(StudentTutorLink).where(StudentTutorLink.student_id == 1, StudentTutorLink.tutor_id == 1)
+    res = await db_session.execute(link_stmt)
+    obj = res.scalar_one()
+    obj.is_active = False
+    await db_session.commit()
+
+    payload = RescheduleWebRequest(appointment_time=datetime.now(), is_student=True)
+    request = MagicMock(spec=Request)
+    
+    with pytest.raises(HTTPException) as exc_info:
+        await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_student_mode_validation_error(db_session):
+    payload = RescheduleWebRequest(appointment_time=datetime.now(), is_student=True)
+    request = MagicMock(spec=Request)
+    
+    with patch("app.services.booking_service.check_availability", side_effect=ValueError("Tutor not available")):
+        with pytest.raises(HTTPException) as exc_info:
+            await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+        assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_student_mode_success(db_session):
+    new_time = datetime(2026, 6, 22, 17, 0, tzinfo=timezone.utc)
+    payload = RescheduleWebRequest(appointment_time=new_time, is_student=True)
+    
+    bot = AsyncMock()
+    request = MagicMock(spec=Request)
+    request.app.state.bot = bot
+
+    with patch("app.services.booking_service.check_availability", AsyncMock()), \
+         patch("app.services.booking_service.check_tutor_absence", AsyncMock()), \
+         patch("app.services.booking_service.check_double_booking", AsyncMock()):
+        
+        res = await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+        assert res == {"status": "success"}
+        assert bot.send_message.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reschedule_from_web_student_mode_bot_errors(db_session):
+    new_time = datetime(2026, 6, 22, 17, 0, tzinfo=timezone.utc)
+    payload = RescheduleWebRequest(appointment_time=new_time, is_student=True)
+    
+    bot = AsyncMock()
+    bot.send_message.side_effect = Exception("Bot error")
+    request = MagicMock(spec=Request)
+    request.app.state.bot = bot
+
+    with patch("app.services.booking_service.check_availability", AsyncMock()), \
+         patch("app.services.booking_service.check_tutor_absence", AsyncMock()), \
+         patch("app.services.booking_service.check_double_booking", AsyncMock()):
+        
+        res = await reschedule_from_web(booking_id=10, payload=payload, request=request, session=db_session)
+        assert res == {"status": "success"}

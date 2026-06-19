@@ -144,6 +144,7 @@ async def sync_booking_to_calendar(session: AsyncSession, booking: Booking) -> N
     """
     # Safe refresh to ensure booking columns are fully loaded and not expired (only if persistent)
     if inspect(booking).persistent:
+        await session.flush()
         await session.refresh(booking)
 
     tutor = await session.get(Tutor, booking.tutor_id)
@@ -166,7 +167,7 @@ async def sync_booking_to_calendar(session: AsyncSession, booking: Booking) -> N
     student = await session.get(Student, booking.student_id)
     student_name = booking.student_name_snapshot or (student.full_name if student else "Неизвестно")
     student_phone = student.phone if student else "—"
-    pay_method = "💵 Наличные" if booking.payment_method == "cash" else "💳 Перевод на карту"
+    pay_method = "Наличные" if booking.payment_method == "cash" else "Перевод на карту"
 
     # Get service duration
     service = await session.get(Service, booking.service_id) if booking.service_id else None
@@ -177,15 +178,19 @@ async def sync_booking_to_calendar(session: AsyncSession, booking: Booking) -> N
         start_time = start_time.replace(tzinfo=timezone.utc)
     end_time = start_time + timedelta(minutes=duration)
 
-    summary = f"📚 {booking.service_type} — {student_name}"
+    summary = f"{booking.service_type} — {student_name}"
+    
+    from app.bot.formatting import STATUS_LABEL
+    status_ru = STATUS_LABEL.get(booking.status.value, booking.status.value)
+    
     description = (
-        f"👤 Ученик: {student_name}\n"
-        f"📞 Телефон: {student_phone}\n"
-        f"💰 Оплата: {pay_method}\n"
-        f"🔄 Статус: {booking.status.value}\n"
+        f"Ученик: {student_name}\n"
+        f"Телефон: {student_phone}\n"
+        f"Оплата: {pay_method}\n"
+        f"Статус: {status_ru}\n"
     )
     if tutor.meeting_link:
-        description += f"🔗 Ссылка на урок: {tutor.meeting_link}\n"
+        description += f"Ссылка на урок: {tutor.meeting_link}\n"
 
     event_payload = {
         "summary": summary,
@@ -234,6 +239,7 @@ async def delete_calendar_event(session: AsyncSession, booking: Booking) -> None
     """
     # Safe refresh to ensure booking columns are fully loaded and not expired (only if persistent)
     if inspect(booking).persistent:
+        await session.flush()
         await session.refresh(booking)
 
     if not booking.google_event_id:

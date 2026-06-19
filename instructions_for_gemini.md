@@ -9,40 +9,56 @@
 1. **FastAPI Route Resolution Order Fixed**:
    * Moved the `GET /api/v1/tutors/by-student` route above `GET /api/v1/tutors/{tutor_id}` inside [tutor.py](file:///D:/Portfolio/Academic/AcademicLink/app/api/tutor.py).
    * Added the missing `Student` database model import inside [tutor.py](file:///D:/Portfolio/Academic/AcademicLink/app/api/tutor.py) to enable database query joins.
-   * This successfully resolves the `422 Unprocessable Content` error where FastAPI was matching the literal string `"by-student"` to the integer `{tutor_id}` path parameter.
 
 2. **Many-to-Many Student-Tutor Architecture**:
    * Designed and implemented the M2M link model `StudentTutorLink` inside [models.py](file:///D:/Portfolio/Academic/AcademicLink/app/db/models.py) containing tutor-specific details (`prepaid_balance`, `notes`, and `is_active`).
-   * Cleaned up the `Student` model to represent global student identity (with unique phone and telegram_id fields).
-   * Developed a robust database migration script inside [database.py](file:///D:/Portfolio/Academic/AcademicLink/app/db/database.py) that automatically detects older schema states, deduplicates existing student records, moves balances and notes to the link table, redirects bookings, and drops deprecated columns.
-   * Refactored API routers ([tutor.py](file:///D:/Portfolio/Academic/AcademicLink/app/api/tutor.py)), booking services ([booking_service.py](file:///D:/Portfolio/Academic/AcademicLink/app/services/booking_service.py)), and all bot handlers ([handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py)) to join the link table and handle registrations/deletions seamlessly without duplicating student data.
-   * Updated the test suite fixtures and test files to seed `StudentTutorLink` records.
+   * Cleaned up the `Student` model to represent global student identity.
+   * Developed a database migration script inside [database.py](file:///D:/Portfolio/Academic/AcademicLink/app/db/database.py) that deduplicates student records and moves balances/notes to the link table.
 
 3. **Student Bot Registration & Multi-Tutor Support**:
-   * Modified `start_student_registration` in [handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py) to check for student registration specifically for the current `tutor_id` instead of searching globally.
-   * If a student is already registered with another tutor, the bot now automatically creates a new association link `StudentTutorLink` for the new tutor, copying their contact details (name and phone) instantly to ensure they are linked to both tutors.
-   * Updated automatic student linking by username inside `_send_dashboard` to link all records matching the username instead of just one.
+   * Modified student registration in [handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py) to associate student accounts with new tutors dynamically without duplicating student contact details.
 
-4. **Direct WebApp Sign-Up (Removed Bot Selection Dialog)**:
-   * Updated `build_student_menu` and `cmd_book_select_tutor` in [handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py) to make the "📅 Записаться" button always open the WebApp directly (pointing to the first tutor) rather than sending inline selection buttons inside the chat.
-   * The student can switch tutors directly within the WebApp's dropdown header.
+4. **Dynamic In-Place WebApp Tutor Switching**:
+   * Refactored [landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html) to switch tutors in-place dynamically using `window.history.pushState` and loading details/services via JS, avoiding full page reloads to maintain Telegram context.
 
-5. **Dynamic In-Place WebApp Tutor Switching**:
-   * Refactored [landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html) to switch tutors in-place dynamically (using `window.history.pushState` and loading details/services via JS) rather than triggering full page reloads (`window.location.href`).
-   * This prevents losing the Telegram WebApp context and session authorization hash inside the Telegram WebApp frame.
-   * Personalized brand accent colors are applied dynamically to the web UI when switching tutors on the fly.
+5. **Student settings & Reminder Toggle**:
+   * Added the `⚙️ Настройки` button to the student's reply menu keyboard layout in [handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py#L128).
+   * Clicking this button now invokes [cmd_settings](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py#L1323) which recognizes them as a student and shows their profile info along with an inline toggle button for reminders (`🔔 Напоминания: Вкл / Выкл`).
+   * Spamming `/start` as a student is fully safe, clearing FSM states and reloading the dashboard.
 
-6. **Polished Dropdown Selection Style**:
-   * Redesigned the tutor select box in [landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html) with clean borders, modern shadows, hover transitions, and a customized CSS-drawn chevron arrow (`▼`).
-   * Removed the emoji sticker (`👨‍🏫`) prefix from select option templates.
+6. **Simplified SBP Payment Details**:
+   * Removed Tinkoff payment link (`sbp_link`) and QR code (`sbp_qr_url`) fields from the tutor's SBP settings in the bot.
+   * Completely removed the QR code container (`modal-qr-container`) and generator logic from the WebApp [landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html). It now shows only the recipient's phone and bank name.
 
-7. **Form Submission & Validation Error Fixes**:
-   * Added the missing `<input type="tel" id="phone">` field in [landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html) which was causing a JS TypeError blocking submission.
-   * Normalized phone number inputs on submission (stripping formatting and converting Russian `8...` to `+7...` to match API regex requirements).
-   * Formatted FastAPI validation errors properly in [landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html) to show readable strings (e.g. `phone: Номер телефона должен быть...`) instead of `[object Object]`.
+7. **Tutor Settings Cleanup**:
+   * Removed the pause button (`🔴 Пауза` / `🟢 Старт`) and status info from the settings menu.
+   * Removed Zoom/Meet conference link (`meeting_link`) configurations and handlers.
+   * Removed the direct landing page link, keeping only the Telegram invitation ref link.
 
-8. **Verified Integrity**:
-   * All 37 integration and backend tests pass successfully (`pytest` status: green).
+8. **Polished Service & Absence Deletion**:
+   * Replaced raw text commands `/del_service_{id}` in the service list with beautiful inline buttons `🗑 Удалить «{service.name}»` mapping to callback handler [cb_del_service](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py#L2920).
+   * Replaced raw text commands `/del_absence_{id}` in the absence list with clean inline buttons `🗑 Удалить: {date}` mapping to callback handler [cb_del_absence](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py#L1773).
+
+9. **Tutor Name in Cancellation Alerts**:
+   * Updated tutor cancellation alerts (quick block, absences, manual cancellation, payment rejection) to load and print the tutor's name (`{tutor_name}`) to the student.
+
+10. **Broadcast Sender Info & Direct Tutor Link**:
+    * Prefixed broadcast messages sent to students with the tutor's name (e.g., `📢 Сообщение от преподавателя {tutor_name}:\n\n{text}`).
+    * Enhanced the preview message shown to tutors to show exactly how the prefix will look and list that the `💬 Написать репетитору` button will be appended.
+    * Added an inline keyboard to every broadcast message sent to students containing a single button: `💬 Написать репетитору` which opens a direct Telegram chat link (`https://t.me/{username}` or fallback to `tg://user?id={tg_id}`).
+    * Simplified the mailing result screen for the tutor to display a clean success/error status instead of a detailed recipient breakdown.
+
+11. **Google Calendar Sync & Session Refresh Bug Fixed**:
+    * Added `await session.flush()` before `await session.refresh(booking)` inside `delete_calendar_event` in [google_calendar_service.py](file:///D:/Portfolio/Academic/AcademicLink/app/services/google_calendar_service.py#L237).
+    * This prevents in-memory modifications (like `booking.status = BookingStatus.CANCELLED`) from being lost/overwritten when SQLAlchemy reloads data from the database.
+
+12. **Tutor Reschedule Rejection Callback Mismatch Resolved**:
+    * Updated the decorator for [cb_tutor_resched_reject](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py#L3262) to use `@router.callback_query(F.data.startswith("tr_r:"))` matching the short callback prefix (shortened to stay within the 64-byte Telegram limit).
+    * Updated the mock data in [test_student_features.py](file:///D:/Portfolio/Academic/AcademicLink/tests/test_student_features.py#L364) to match this short prefix.
+
+13. **Verified Integrity**:
+    * Added integration tests `test_cb_student_cancel_confirm` and `test_cb_tutor_cancel_confirm` in [test_student_features.py](file:///D:/Portfolio/Academic/AcademicLink/tests/test_student_features.py#L456) to verify cancellation flows.
+    * All **52 integration and backend tests** pass successfully (`pytest` status: green).
 
 ---
 
@@ -50,22 +66,19 @@
 
 * **[landing.html](file:///D:/Portfolio/Academic/AcademicLink/landing.html)**: Personal student booking page. Contains HTML/CSS/JS with SBP modal payment logic and dynamic tutor switching.
 * **[tutor.py](file:///D:/Portfolio/Academic/AcademicLink/app/api/tutor.py)**: Router file containing tutor endpoints.
-* **[handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py)**: The Telegram bot handlers containing deep-linking registration flow and student keyboards.
-* **[test_api_booking.py](file:///D:/Portfolio/Academic/AcademicLink/tests/test_api_booking.py)**: Integration tests verifying booking creating API and the new `/tutors/by-student` route.
+* **[handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py)**: Bot handlers containing FSM, keyboards, and message routers.
+* **[models.py](file:///D:/Portfolio/Academic/AcademicLink/app/db/models.py)**: SQLModel structures.
+* **[google_calendar_service.py](file:///D:/Portfolio/Academic/AcademicLink/app/services/google_calendar_service.py)**: Google Calendar API sync helper.
+* **[how_to_test_all_scenarios.md](file:///C:/Users/Admin/.gemini/antigravity-cli/brain/0b475b14-a07d-449a-936d-f64f86114d96/how_to_test_all_scenarios.md)**: Detailed checklist of all manual test scenarios for tutors and students in Russian.
 
 ---
 
-## 🔮 Next Steps & Ideas for the Next Session
-
-* **Filter Out Past Bookings (Schedule Bug)**:
-  * Currently, past lessons are not removed from the active schedule lists, causing them to accumulate under `📅 Расписание` / `🟡 Новые заявки` (tutors) and `🗂 Мои записи` (students).
-  * Filter `Booking.appointment_time` to exclude past lessons (e.g. `Booking.appointment_time >= now_utc`).
-
-* **Student Cancellation & Rescheduling with Tutor Notifications**:
-  * Add inline keyboard buttons (`❌ Отменить` and `🔄 Перенести`) to each booking in the student's `🗂 Мои записи` list.
-  * Update `TutorCallbackMiddleware` in [handlers.py](file:///D:/Portfolio/Academic/AcademicLink/app/bot/handlers.py) to allow student callbacks starting with `student_` prefix to bypass tutor validation.
-  * Implement confirmation/safety buffer checks (`settings.cancel_safety_hours`) for cancellations.
-  * Send immediate Telegram notifications to tutors (`booking.tutor.tg_id`) with details whenever a student cancels or reschedules.
-
-* **Student Reminder Toggle**:
-  * Add an inline toggle button (`🔔 Напоминания: Вкл` / `🔕 Напоминания: Выкл`) on the student welcome dashboard `_send_dashboard` to let students manage their reminder preference (`Student.wants_reminders`).
+* **All Tasks Completed**:
+  * Deactivated student lockout (restricted bot access for students with 0 active links) is implemented.
+  * Archived student restoration via phone search (`🔍 Найти по номеру` -> `🟢 Восстановить ученика`) is implemented.
+  * Same-time rescheduling prevention check (ensuring a booking cannot be rescheduled to its current time) is implemented and verified.
+  * Student-proposed reschedule flow: instead of immediate rescheduling, a request is sent to the tutor's Telegram chat containing inline buttons `✅ Подтвердить`, `❌ Отклонить перенос`, and `💬 Связаться с учеником`.
+  * Tutor registration FSM flow: during onboarding, new tutors are prompted to enter their own full name (FIO) instead of using their Telegram profile name automatically.
+  * Google Calendar sync refresh bug fixed.
+  * Shortened callback prefix for reschedule rejection implemented.
+  * Integration tests added and verified.

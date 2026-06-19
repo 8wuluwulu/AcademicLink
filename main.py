@@ -77,8 +77,21 @@ async def lifespan(application: FastAPI):
             bot_info = await bot.get_me()
             set_bot_username(bot_info.username)
             logger.info("Cached bot username: @%s", bot_info.username)
+            
+            # Programmatically set bot description & short description in Telegram
+            await bot.set_my_description(
+                "AcademicLink — бот-планировщик и CRM для репетиторов.\n\n"
+                "📅 Ведение расписания занятий\n"
+                "👥 База учеников и балансы уроков\n"
+                "🔗 Синхронизация с Google Календарем\n"
+                "💳 Оплата и продление подписок"
+            )
+            await bot.set_my_short_description(
+                "📅 AcademicLink — расписание и CRM для репетиторов. Записывайтесь к преподавателям в один клик!"
+            )
+            logger.info("Bot descriptions set successfully.")
         except Exception as exc:
-            logger.error("Failed to fetch bot username during startup: %s", exc)
+            logger.error("Failed to set bot descriptions or fetch info during startup: %s", exc)
 
         application.state.bot = bot  # Also store on app.state for request access
         dp = Dispatcher()
@@ -169,6 +182,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def serve_landing(tutor_id: int):
     """Serves the personalized student landing page."""
     return FileResponse("landing.html")
+
+
+@app.get("/book_old/{tutor_id}", tags=["Web UI"])
+async def serve_landing_old(tutor_id: int):
+    """Serves the old personalized student landing page."""
+    return FileResponse("landing_old.html")
 
 
 

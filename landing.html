@@ -10,89 +10,100 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400&family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
 
-    <style>
+<style>
         :root {
-            --primary: #4f46e5;
-            --primary-light: #818cf8;
-            --primary-glow: rgba(79, 70, 229, 0.15);
-            --bg: #f8fafc;
-            --card-bg: rgba(255, 255, 255, 0.85);
-            --text-main: #0f172a;
-            --text-muted: #64748b;
-            --border: #e2e8f0;
-            --success: #10b981;
-            --error: #f43f5e;
-            --success-bg: #ecfdf5;
-            --error-bg: #fff1f2;
-            --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            --font-heading: 'Outfit', sans-serif;
+            --bg: #F0F4F8;
+            --card-bg: #FFFFFF;
+            --text-main: #1E293B;
+            --text-muted: #64748B;
+            --border: #E2E8F0;
+            --border-focus: #0284C7;
+            --primary: #0284C7;
+            --primary-glow: rgba(2, 132, 199, 0.06);
+            --primary-border: rgba(2, 132, 199, 0.15);
+
+            --success: #0284C7;
+            --success-bg: #F0F9FF;
+            --success-border: #BAE6FD;
+
+            --error: #DC2626;
+            --error-bg: #FEF2F2;
+            --error-border: #FECACA;
+
+            --warning: #D97706;
+            --warning-bg: #FFFBEB;
+            --warning-border: #FDE68A;
+
+            --font-main: 'Outfit', system-ui, -apple-system, sans-serif;
+            --font-heading: 'Newsreader', Georgia, serif;
+            --font-mono: 'JetBrains Mono', monospace;
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         body {
             font-family: var(--font-main);
-            background: radial-gradient(circle at 0% 0%, #eef2ff 0%, #f8fafc 50%, #f1f5f9 100%);
+            background: var(--bg);
             color: var(--text-main);
             line-height: 1.6;
-            padding: 40px 16px;
+            padding: 20px 16px 40px;
             min-height: 100vh;
+            min-height: 100dvh;
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
         .container {
             width: 100%;
-            max-width: 540px;
-            animation: fadeIn 0.6s ease-out;
+            max-width: 480px;
+            padding-top: 24px;
+            animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
 
         @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(16px); }
+            to   { opacity: 1; transform: translateY(0);   }
         }
 
+        /* ─── Header ─── */
         header {
             text-align: center;
-            margin-bottom: 32px;
+            margin-bottom: 24px;
         }
 
         h1 {
-            font-family: var(--font-heading);
-            font-size: 32px;
-            font-weight: 800;
-            background: linear-gradient(135deg, #312e81 0%, #4f46e5 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 6px;
-            letter-spacing: -0.5px;
+            font-family: var(--font-main);
+            font-size: 26px;
+            font-weight: 600;
+            font-style: normal;
+            color: var(--text-main);
+            margin-bottom: 14px;
+            letter-spacing: -0.02em;
+            line-height: 1.15;
         }
 
         .tutor-name {
-            font-size: 16px;
-            color: var(--text-muted);
+            font-family: var(--font-main);
+            font-size: 13px;
             font-weight: 500;
-            background: #eef2ff;
-            padding: 6px 16px;
-            border-radius: 99px;
-            display: inline-block;
-            border: 1px solid rgba(79, 70, 229, 0.1);
+            color: #0369A1;
+            background: #F0F9FF;
+            padding: 8px 16px;
+            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid #BAE6FD;
         }
 
         .tutor-select-container {
@@ -105,24 +116,27 @@
             position: relative;
             display: inline-flex;
             align-items: center;
+            width: 100%;
         }
 
         .tutor-select-dropdown {
             font-family: var(--font-main);
             font-size: 15px;
-            font-weight: 600;
+            font-weight: 500;
             background: #ffffff;
             color: var(--text-main);
-            padding: 8px 36px 8px 18px;
-            border-radius: 16px;
+            padding: 14px 44px 14px 16px;
+            min-height: 52px;
+            border-radius: 12px;
             border: 1px solid var(--border);
             outline: none;
             cursor: pointer;
             appearance: none;
             -webkit-appearance: none;
             -moz-appearance: none;
-            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: border-color 0.2s;
+            width: 100%;
+            text-align: center;
         }
 
         .select-wrapper::after {
@@ -135,19 +149,11 @@
             position: absolute;
             right: 18px;
             pointer-events: none;
-            opacity: 0.8;
             margin-top: -3px;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .tutor-select-dropdown:hover {
-            border-color: var(--primary);
-            box-shadow: 0 6px 16px rgba(79, 70, 229, 0.08);
-            transform: translateY(-1px);
-        }
-
-        .select-wrapper:hover::after {
-            border-color: var(--primary);
+            border-color: #CBD5E1;
         }
 
         .tutor-select-dropdown:focus {
@@ -155,175 +161,296 @@
             box-shadow: 0 0 0 3px var(--primary-glow);
         }
 
+        /* ─── Card ─── */
         .card {
             background: var(--card-bg);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border-radius: 24px;
-            padding: 36px;
-            box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.06),
-                0 0 0 1px rgba(226, 232, 240, 0.8);
+            border-radius: 20px;
+            padding: 28px 24px 32px;
+            border: none;
+            box-shadow:
+                0 0 0 1px rgba(0, 0, 0, 0.03),
+                0 2px 4px rgba(0, 0, 0, 0.02),
+                0 12px 32px rgba(0, 0, 0, 0.06);
         }
 
-        .section-title {
-            font-family: var(--font-heading);
-            font-size: 17px;
-            font-weight: 700;
-            color: #1e1b4b;
-            margin-bottom: 18px;
-            margin-top: 30px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .section-title:first-of-type {
-            margin-top: 0;
-        }
-
-        .section-title span {
-            background: var(--primary);
-            color: white;
-            width: 24px;
-            height: 24px;
-            border-radius: 8px;
+        /* ─── Step Progress ─── */
+        .steps-progress-container {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 13px;
-            font-weight: 800;
-            box-shadow: 0 4px 10px rgba(79, 70, 229, 0.25);
+            gap: 0;
+            margin-bottom: 28px;
+            padding: 0 8px;
         }
 
-        .form-group {
+        .step-indicator {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            position: relative;
+            z-index: 2;
+            flex: 0 0 auto;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .step-num {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--bg);
+            border: 2px solid var(--border);
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .step-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            transition: all 0.3s ease;
+        }
+
+        .step-line {
+            height: 2px;
+            background: var(--border);
+            flex: 1;
+            min-width: 32px;
+            margin: 0 8px;
+            transform: translateY(-11px);
+            z-index: 1;
+            transition: background 0.3s ease;
+            border-radius: 1px;
+        }
+
+        /* Active */
+        .step-indicator.active .step-num {
+            border-color: var(--primary);
+            background: #F0F9FF;
+            color: var(--primary);
+        }
+
+        .step-indicator.active .step-label {
+            color: var(--primary);
+        }
+
+        /* Completed */
+        .step-indicator.completed .step-num {
+            border-color: var(--primary);
+            background: var(--primary);
+            color: #ffffff;
+        }
+
+        .step-indicator.completed .step-label {
+            color: var(--text-main);
+        }
+
+        .step-line.completed {
+            background: var(--primary);
+        }
+
+        /* ─── Step Content ─── */
+        .step-content {
+            display: none;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 0.35s ease, transform 0.35s ease;
+        }
+
+        .step-content.active {
+            display: block;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ─── Section Title ─── */
+        .section-title {
+            font-family: var(--font-main);
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-main);
             margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: 0;
+            text-transform: none;
+        }
+
+        .section-title span {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 6px;
+            background: #F0F9FF;
+            color: var(--primary);
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .section-title span::after {
+            display: none;
+        }
+
+        /* ─── Form Elements ─── */
+        .form-group {
+            margin-bottom: 22px;
         }
 
         label {
             display: block;
             font-size: 13px;
-            font-weight: 600;
-            color: #334155;
-            margin-bottom: 8px;
-            letter-spacing: 0.2px;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 6px;
         }
 
         input,
         select {
             width: 100%;
-            padding: 14px 18px;
+            padding: 14px 16px;
+            min-height: 52px;
             border: 1px solid var(--border);
             border-radius: 12px;
             font-size: 15px;
             font-weight: 500;
-            background-color: #fcfcfd;
+            background-color: #ffffff;
             font-family: var(--font-main);
             color: var(--text-main);
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
 
         input::placeholder {
-            color: #94a3b8;
+            color: #94A3B8;
         }
 
         input:focus,
         select:focus {
             outline: none;
             border-color: var(--primary);
-            background-color: #ffffff;
-            box-shadow: 0 0 0 4px var(--primary-glow);
+            box-shadow: 0 0 0 3px var(--primary-glow);
         }
 
         input:disabled {
-            background-color: #f1f5f9;
-            color: #64748b;
+            background-color: #F8FAFC;
+            color: var(--text-main);
+            opacity: 0.7;
             cursor: not-allowed;
-            border-color: #e2e8f0;
+            border-color: var(--border);
+        }
+
+        #tg-user:disabled {
+            background-color: #F0F9FF;
+            color: #0369A1;
+            font-weight: 600;
+            border-color: #BAE6FD;
+            cursor: default;
+            opacity: 1;
         }
 
         .tg-linked-badge {
             display: none;
             align-items: center;
             gap: 8px;
-            font-size: 13px;
-            color: var(--success);
-            font-weight: 600;
+            font-size: 12px;
+            color: #0369A1;
+            font-weight: 500;
             margin-top: 8px;
-            background: var(--success-bg);
-            padding: 8px 14px;
-            border-radius: 10px;
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            animation: fadeIn 0.3s ease-out;
+            background: #F0F9FF;
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid #BAE6FD;
         }
 
+        .tg-linked-badge svg {
+            flex-shrink: 0;
+            color: #0284C7;
+        }
+
+        /* ─── Time Slots ─── */
         .slots-container {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-            gap: 10px;
-            margin-top: 10px;
+            grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+            gap: 8px;
+            margin-top: 8px;
         }
 
         .slot-btn {
-            padding: 12px 8px;
+            padding: 14px 8px;
+            min-height: 50px;
             border: 1px solid var(--border);
-            border-radius: 12px;
+            border-radius: 10px;
             background: #ffffff;
             color: var(--text-main);
             cursor: pointer;
             font-size: 14px;
+            font-family: var(--font-mono);
             font-weight: 600;
             text-align: center;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+            transition: all 0.15s ease;
         }
 
         .slot-btn:hover {
-            border-color: var(--primary-light);
-            background: #fafafa;
-            transform: translateY(-1px);
+            border-color: var(--primary);
+            background: #F0F9FF;
+            color: var(--primary);
+        }
+
+        .slot-btn:active {
+            transform: scale(0.97);
         }
 
         .slot-btn.selected {
             background: var(--primary);
-            color: white;
+            color: #ffffff;
             border-color: var(--primary);
-            box-shadow: 0 8px 16px var(--primary-glow);
+            box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25);
         }
 
         .no-slots {
             grid-column: 1 / -1;
             text-align: center;
-            padding: 24px;
+            padding: 28px 16px;
             color: var(--text-muted);
-            background: #f8fafc;
-            border-radius: 14px;
+            background: var(--bg);
+            border-radius: 12px;
             border: 1px dashed var(--border);
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
         }
 
-        /* Premium Payment Grid */
+        /* ─── Payment Methods ─── */
         .pay-methods-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
             margin-top: 8px;
         }
 
         .pay-card {
             border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 16px;
+            border-radius: 12px;
+            padding: 16px 18px;
+            min-height: 54px;
             display: flex;
-            flex-direction: column;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
+            gap: 12px;
             background: #ffffff;
             cursor: pointer;
-            font-size: 14px;
-            font-weight: 700;
+            font-size: 15px;
+            font-weight: 500;
             color: var(--text-main);
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.01);
+            transition: all 0.15s ease;
         }
 
         .pay-card input[type="radio"] {
@@ -331,88 +458,163 @@
         }
 
         .pay-card:hover {
-            border-color: var(--primary-light);
-            background: #faf5ff;
+            border-color: #CBD5E1;
+            background: #FAFBFC;
         }
 
         .pay-card.active {
             border-color: var(--primary);
-            background: rgba(79, 70, 229, 0.03);
-            box-shadow: 0 0 0 4px var(--primary-glow);
+            background: #F0F9FF;
+            color: var(--primary);
+            box-shadow: 0 0 0 1px var(--primary);
         }
 
-        .pay-icon {
-            font-size: 20px;
+        .pay-icon-svg {
+            color: var(--text-muted);
+            transition: color 0.15s ease;
+            flex-shrink: 0;
         }
 
+        .pay-card.active .pay-icon-svg {
+            color: var(--primary);
+        }
+
+        /* ─── Step Navigation ─── */
+        .step-navigation {
+            display: flex;
+            gap: 10px;
+            margin-top: 24px;
+        }
+
+        .nav-btn {
+            font-family: var(--font-main);
+            font-size: 15px;
+            font-weight: 600;
+            padding: 14px 20px;
+            min-height: 52px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            outline: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            user-select: none;
+        }
+
+        .nav-btn-prev {
+            background: var(--bg);
+            color: var(--text-main);
+            border: 1px solid var(--border);
+            flex: 1;
+        }
+
+        .nav-btn-prev:hover:not(:disabled) {
+            background: #E2E8F0;
+            border-color: #CBD5E1;
+        }
+
+        .nav-btn-prev:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        .nav-btn-next {
+            background: var(--primary);
+            color: #ffffff;
+            border: none;
+            flex: 2;
+        }
+
+        .nav-btn-next:hover:not(:disabled) {
+            background: #0273AB;
+        }
+
+        .nav-btn-next:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        .nav-btn:disabled {
+            background: var(--bg);
+            color: #94A3B8;
+            border: 1px solid var(--border);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        /* ─── Submit Button ─── */
         button.submit-btn {
             width: 100%;
-            background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
-            color: white;
+            background: var(--primary);
+            color: #ffffff;
             border: none;
-            padding: 18px;
-            border-radius: 14px;
-            font-size: 16px;
-            font-weight: 700;
+            padding: 16px;
+            min-height: 54px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: var(--font-main);
             cursor: pointer;
-            margin-top: 16px;
-            box-shadow: 0 10px 20px var(--primary-glow);
+            margin-top: 24px;
+            transition: all 0.15s ease;
         }
 
-        button.submit-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 14px 24px var(--primary-glow);
+        button.submit-btn:hover:not(:disabled) {
+            background: #0273AB;
+        }
+
+        button.submit-btn:active:not(:disabled) {
+            transform: scale(0.98);
         }
 
         button.submit-btn:disabled {
-            background: #94a3b8;
+            background: var(--bg);
+            color: #94A3B8;
+            border: 1px solid var(--border);
             cursor: not-allowed;
-            box-shadow: none;
-            transform: none;
         }
 
+        /* ─── Status Messages ─── */
         #status-msg {
-            margin-top: 24px;
-            padding: 16px 20px;
-            border-radius: 14px;
+            margin-top: 16px;
+            padding: 12px 16px;
+            border-radius: 10px;
             display: none;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
             text-align: center;
-            animation: fadeIn 0.3s ease-out;
         }
 
         .status-success {
             background-color: var(--success-bg);
-            color: #065f46;
-            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success-border);
         }
 
         .status-error {
             background-color: var(--error-bg);
-            color: #991b1b;
-            border: 1px solid rgba(244, 63, 94, 0.2);
+            color: var(--error);
+            border: 1px solid var(--error-border);
         }
 
+        /* ─── Loader ─── */
         .loader {
             display: inline-block;
-            width: 18px;
-            height: 18px;
-            border: 2.5px solid rgba(255, 255, 255, .3);
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
             border-top-color: #fff;
             animation: spin 0.8s infinite linear;
-            margin-right: 8px;
+            margin-right: 6px;
             vertical-align: middle;
         }
 
         @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
+            to { transform: rotate(360deg); }
         }
 
-        /* Custom Date Picker Styling */
+        /* ─── Date Input ─── */
         input[type="date"]::-webkit-calendar-picker-indicator {
             background: transparent;
             bottom: 0;
@@ -428,19 +630,67 @@
 
         .date-input-wrapper {
             position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
         }
 
-        .date-input-wrapper::after {
-            content: "📅";
+        .date-input-wrapper svg {
             position: absolute;
-            right: 18px;
-            top: 50%;
-            transform: translateY(-50%);
+            right: 16px;
             pointer-events: none;
-            font-size: 16px;
+            color: var(--text-muted);
         }
 
-        /* Modal Backdrop */
+        /* ─── Reschedule Info ─── */
+        #reschedule-info-box {
+            background: var(--warning-bg);
+            border: 1px solid var(--warning-border);
+            padding: 18px;
+            border-radius: 14px;
+            margin-bottom: 20px;
+            text-align: left;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .reschedule-title {
+            font-family: var(--font-main);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 700;
+            color: var(--warning);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .reschedule-details {
+            color: #78350F;
+        }
+
+        .reschedule-row {
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px dashed rgba(217, 119, 6, 0.12);
+            padding-bottom: 6px;
+        }
+
+        .reschedule-row:last-child {
+            margin-bottom: 0;
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .reschedule-row b {
+            color: #92400E;
+            font-weight: 600;
+        }
+
+        /* ─── Modal ─── */
         .modal-backdrop {
             position: fixed;
             top: 0;
@@ -448,27 +698,26 @@
             width: 100%;
             height: 100%;
             background: rgba(15, 23, 42, 0.4);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
             display: none;
             justify-content: center;
             align-items: center;
             z-index: 1000;
-            animation: fadeIn 0.3s ease-out;
         }
 
-        /* Modal Container */
         .modal-card {
             background: #ffffff;
-            border-radius: 24px;
-            padding: 32px;
+            border-radius: 20px;
+            padding: 32px 28px;
             width: 90%;
-            max-width: 440px;
-            box-shadow: 0 30px 60px -15px rgba(15, 23, 42, 0.2);
-            border: 1px solid rgba(226, 232, 240, 0.8);
-            transform: scale(0.95);
-            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            max-width: 400px;
+            border: none;
             text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+            transform: translateY(20px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .modal-backdrop.show {
@@ -476,50 +725,32 @@
         }
 
         .modal-backdrop.show .modal-card {
-            transform: scale(1);
+            transform: translateY(0);
+            opacity: 1;
         }
 
         .modal-header {
-            font-family: var(--font-heading);
+            font-family: var(--font-main);
             font-size: 20px;
-            font-weight: 750;
-            color: #1e1b4b;
-            margin-bottom: 8px;
+            font-weight: 600;
+            font-style: normal;
+            color: var(--text-main);
+            margin-bottom: 6px;
+            letter-spacing: -0.02em;
         }
 
         .modal-amount {
             font-size: 28px;
-            font-weight: 800;
+            font-weight: 700;
             color: var(--primary);
-            margin-bottom: 18px;
-            font-family: var(--font-heading);
-        }
-
-        .sbp-qr-container {
-            width: 200px;
-            height: 200px;
-            margin: 0 auto 20px auto;
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #ffffff;
-            padding: 10px;
-            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
-        }
-
-        .sbp-qr-container img {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
+            margin-bottom: 20px;
+            font-family: var(--font-mono);
         }
 
         .sbp-details-box {
-            background: #f8fafc;
+            background: var(--bg);
             border: 1px solid var(--border);
-            border-radius: 16px;
+            border-radius: 12px;
             padding: 16px;
             text-align: left;
             margin-bottom: 20px;
@@ -529,7 +760,8 @@
         .sbp-details-row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
+            align-items: center;
+            margin-bottom: 10px;
         }
 
         .sbp-details-row:last-child {
@@ -539,6 +771,7 @@
         .sbp-details-label {
             color: var(--text-muted);
             font-weight: 500;
+            font-size: 13px;
         }
 
         .sbp-details-value {
@@ -546,90 +779,82 @@
             color: var(--text-main);
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
+            font-size: 13px;
         }
 
         .copy-btn {
-            background: none;
-            border: none;
-            color: var(--primary);
+            background: #ffffff;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
             cursor: pointer;
             font-size: 11px;
-            font-weight: 700;
-            padding: 2px 6px;
+            font-family: var(--font-main);
+            font-weight: 600;
+            padding: 3px 8px;
             border-radius: 6px;
-            transition: all 0.2s;
+            transition: all 0.15s ease;
         }
 
         .copy-btn:hover {
-            background: var(--primary-glow);
+            border-color: var(--primary);
+            color: var(--primary);
+            background: #F0F9FF;
         }
 
         .modal-input-group {
             text-align: left;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
 
         .modal-input-group label {
             display: block;
             font-size: 13px;
-            font-weight: 600;
-            color: var(--text-main);
-            margin-bottom: 8px;
-        }
-
-        .modal-input-group input {
-            width: 100%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            border: 1.5px solid var(--border);
-            font-family: inherit;
-            font-size: 14px;
-            outline: none;
-            box-sizing: border-box;
-        }
-
-        .modal-input-group input:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px var(--primary-glow);
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 6px;
         }
 
         .modal-actions {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            gap: 10px;
         }
 
         .modal-btn {
-            padding: 12px 20px;
+            padding: 14px;
             border-radius: 12px;
-            font-weight: 700;
+            font-weight: 600;
             font-size: 14px;
+            font-family: var(--font-main);
             cursor: pointer;
-            border: none;
-            transition: all 0.2s;
+            border: 1px solid var(--border);
+            transition: all 0.15s ease;
         }
 
         .modal-btn-confirm {
             background: var(--primary);
             color: #ffffff;
-            box-shadow: 0 4px 12px var(--primary-glow);
+            border-color: var(--primary);
         }
 
         .modal-btn-confirm:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 16px var(--primary-glow);
+            background: #0273AB;
+        }
+
+        .modal-btn-confirm:active {
+            transform: scale(0.98);
         }
 
         .modal-btn-cancel {
-            background: #f1f5f9;
-            color: #475569;
+            background: #ffffff;
+            color: var(--text-muted);
         }
 
         .modal-btn-cancel:hover {
-            background: #e2e8f0;
+            background: var(--bg);
+            color: var(--text-main);
         }
-
     </style>
 </head>
 
@@ -648,71 +873,117 @@
         </header>
 
         <div class="card">
+            <!-- Steps Progress Bar -->
+            <div id="steps-progress" class="steps-progress-container">
+                <div class="step-indicator active" id="indicator-1">
+                    <span class="step-num">1</span>
+                    <span class="step-label">Услуга</span>
+                </div>
+                <div class="step-line" id="line-1"></div>
+                <div class="step-indicator" id="indicator-2">
+                    <span class="step-num">2</span>
+                    <span class="step-label">Время</span>
+                </div>
+                <div class="step-line" id="line-2"></div>
+                <div class="step-indicator" id="indicator-3">
+                    <span class="step-num">3</span>
+                    <span class="step-label">Детали</span>
+                </div>
+            </div>
+
             <form id="booking-form">
-                <!-- Section 1 -->
-                <div class="section-title"><span>1</span> Выбор услуги</div>
-                <div class="form-group">
-                    <select id="service" required>
-                        <option value="">Выберите учебную услугу...</option>
-                    </select>
-                </div>
-
-                <!-- Section 2 -->
-                <div class="section-title"><span>2</span> Дата и время урока</div>
-                <div class="form-group">
-                    <label for="date">Выберите дату</label>
-                    <div class="date-input-wrapper">
-                        <input type="date" id="date" required>
+                <div id="reschedule-info-box" style="display: none;">
+                    <div class="reschedule-title">Перенос занятия</div>
+                    <div class="reschedule-details">
+                        <div class="reschedule-row"><b>Ученик:</b> <span id="reschedule-student">...</span></div>
+                        <div class="reschedule-row"><b>Услуга:</b> <span id="reschedule-service">...</span></div>
+                        <div class="reschedule-row"><b>Текущее время:</b> <span id="reschedule-current-time">...</span></div>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label>Доступное время начала</label>
-                    <div id="slots-grid" class="slots-container">
-                        <div class="no-slots">Сначала укажите услугу и желаемую дату</div>
-                    </div>
-                    <input type="hidden" id="selected-time" required>
-                </div>
-
-                <!-- Section 3 -->
-                <div class="section-title"><span>3</span> Контактные данные</div>
-                <div class="form-group">
-                    <label for="full-name">Ваше полное имя</label>
-                    <input type="text" id="full-name" placeholder="Иван Иванов" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="phone">Номер телефона</label>
-                    <input type="tel" id="phone" placeholder="+7 (999) 123-45-67" required>
-                </div>
-
-                <div class="form-group">
-                    <label for="tg-user">Ваш Telegram @username (необязательно)</label>
-                    <input type="text" id="tg-user" placeholder="username">
-                    <div id="tg-linked-badge" class="tg-linked-badge">
-                        <span>🛡️ Авторизован через Telegram Web App</span>
+                <!-- Step 1: Service Selection -->
+                <div class="step-content active" id="step-1">
+                    <div id="section-service">
+                        <div class="section-title"><span>1</span> Выбор услуги</div>
+                        <div class="form-group">
+                            <label for="service">Выберите учебную услугу</label>
+                            <select id="service" required>
+                                <option value="">Выберите учебную услугу...</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Section 4 -->
-                <div class="section-title"><span>4</span> Способ оплаты</div>
-                <div class="form-group">
-                    <div class="pay-methods-grid">
-                        <label class="pay-card active" id="pay-cash-label">
-                            <input type="radio" name="pay-method" value="cash" checked
-                                onchange="updatePaymentCard(this)">
-                            <span class="pay-icon">💵</span>
-                            <span>Наличными</span>
-                        </label>
-                        <label class="pay-card" id="pay-transfer-label">
-                            <input type="radio" name="pay-method" value="transfer" onchange="updatePaymentCard(this)">
-                            <span class="pay-icon">💳</span>
-                            <span>Перевод</span>
-                        </label>
+                <!-- Step 2: Date & Time Selection -->
+                <div class="step-content" id="step-2">
+                    <div class="section-title"><span>2</span> Дата и время урока</div>
+                    <div class="form-group">
+                        <label for="date">Выберите дату</label>
+                        <div class="date-input-wrapper">
+                            <input type="date" id="date" required>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Доступное время начала</label>
+                        <div id="slots-grid" class="slots-container">
+                            <div class="no-slots">Сначала укажите услугу и желаемую дату</div>
+                        </div>
+                        <input type="hidden" id="selected-time" required>
                     </div>
                 </div>
 
-                <button type="submit" class="submit-btn" id="submit-btn">Подтвердить и записаться</button>
+                <!-- Step 3: Contact & Payment Info -->
+                <div class="step-content" id="step-3">
+                    <div id="section-contacts">
+                        <div class="section-title"><span>3</span> Контактные данные</div>
+                        <div class="form-group">
+                            <label for="full-name">Ваше полное имя</label>
+                            <input type="text" id="full-name" placeholder="Иван Иванов" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="phone">Номер телефона</label>
+                            <input type="tel" id="phone" placeholder="+7 (999) 123-45-67" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="tg-user">Ваш Telegram @username</label>
+                            <input type="text" id="tg-user" placeholder="username">
+                            <div id="tg-linked-badge" class="tg-linked-badge">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                                <span>Авторизован через Telegram Web App</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="section-payment">
+                        <div class="section-title"><span>4</span> Способ оплаты</div>
+                        <div class="form-group">
+                            <div class="pay-methods-grid">
+                                <label class="pay-card active" id="pay-cash-label">
+                                    <input type="radio" name="pay-method" value="cash" checked onchange="updatePaymentCard(this)">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pay-icon-svg"><rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="2"></circle><path d="M6 12h.01M18 12h.01"></path></svg>
+                                    <span>Наличными</span>
+                                </label>
+                                <label class="pay-card" id="pay-transfer-label">
+                                    <input type="radio" name="pay-method" value="transfer" onchange="updatePaymentCard(this)">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pay-icon-svg"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>
+                                    <span>Перевод по СБП</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation Controls -->
+                <div id="step-navigation-box" class="step-navigation">
+                    <button type="button" id="prev-step-btn" class="nav-btn nav-btn-prev" style="display: none;" onclick="prevStep()">Назад</button>
+                    <button type="button" id="next-step-btn" class="nav-btn nav-btn-next" onclick="nextStep()" disabled>Далее</button>
+                </div>
+
+                <button type="submit" class="submit-btn" id="submit-btn" style="display: none;">Подтвердить и записаться</button>
             </form>
 
             <div id="status-msg"></div>
@@ -720,11 +991,21 @@
     </div>
 
     <script>
-        // Extract tutor_id from URL path: /book/123
-        const pathParts = window.location.pathname.split('/');
+        // Extract tutor_id from URL path: /book/123 (robust against trailing slashes)
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
         let tutorId = pathParts[pathParts.length - 1];
 
-        const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000/api/v1' : '/api/v1';
+        const API_BASE = (window.location.protocol === 'file:' || !window.location.host) ? 'http://localhost:8000/api/v1' : (window.location.origin + '/api/v1');
+
+        // Helper to bypass ngrok browser warning on API calls
+        async function apiFetch(endpoint, options = {}) {
+            const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
+            const headers = {
+                ...(options.headers || {}),
+                'ngrok-skip-browser-warning': 'true'
+            };
+            return fetch(url, { ...options, headers });
+        }
 
         const tutorDisplay = document.getElementById('tutor-display');
         const serviceSelect = document.getElementById('service');
@@ -743,6 +1024,94 @@
         let tutorData = null;
         let tgUsername = null;
         let tgUserId = null;
+        let rescheduleBookingId = null;
+        let tutorMode = false;
+
+        // Step Wizard State
+        let currentStep = 1;
+        const totalSteps = 3;
+
+        function showStep(stepNum) {
+            currentStep = stepNum;
+            
+            // Hide all steps, show active step
+            document.querySelectorAll('.step-content').forEach((el, index) => {
+                if (index + 1 === stepNum) {
+                    el.classList.add('active');
+                } else {
+                    el.classList.remove('active');
+                }
+            });
+
+            // Update step indicators
+            for (let i = 1; i <= totalSteps; i++) {
+                const indicator = document.getElementById(`indicator-${i}`);
+                if (indicator) {
+                    if (i < stepNum) {
+                        indicator.className = 'step-indicator completed';
+                    } else if (i === stepNum) {
+                        indicator.className = 'step-indicator active';
+                    } else {
+                        indicator.className = 'step-indicator';
+                    }
+                }
+            }
+
+            // Update step lines
+            for (let i = 1; i < totalSteps; i++) {
+                const line = document.getElementById(`line-${i}`);
+                if (line) {
+                    if (i < stepNum) {
+                        line.classList.add('completed');
+                    } else {
+                        line.classList.remove('completed');
+                    }
+                }
+            }
+
+            // Toggle Navigation buttons
+            const prevBtn = document.getElementById('prev-step-btn');
+            const nextBtn = document.getElementById('next-step-btn');
+            
+            if (prevBtn) {
+                prevBtn.style.display = stepNum === 1 ? 'none' : 'flex';
+            }
+            
+            if (nextBtn) {
+                nextBtn.style.display = stepNum === totalSteps ? 'none' : 'flex';
+                // Validate current step
+                nextBtn.disabled = !validateStep(stepNum);
+            }
+
+            if (submitBtn) {
+                submitBtn.style.display = stepNum === totalSteps ? 'block' : 'none';
+                if (stepNum === totalSteps) {
+                    submitBtn.disabled = false;
+                }
+            }
+        }
+
+        function validateStep(stepNum) {
+            if (stepNum === 1) {
+                return !!serviceSelect.value;
+            }
+            if (stepNum === 2) {
+                return !!selectedTimeInput.value;
+            }
+            return true;
+        }
+
+        window.nextStep = () => {
+            if (currentStep < totalSteps && validateStep(currentStep)) {
+                showStep(currentStep + 1);
+            }
+        };
+
+        window.prevStep = () => {
+            if (currentStep > 1) {
+                showStep(currentStep - 1);
+            }
+        };
 
         // Initialize Telegram WebApp SDK
         const tg = window.Telegram ? window.Telegram.WebApp : null;
@@ -758,20 +1127,14 @@
         async function loadTutorData(id) {
             try {
                 // Fetch Tutor Info
-                const tRes = await fetch(`${API_BASE}/tutors/${id}`);
+                const tRes = await apiFetch(`/tutors/${id}`);
                 if (!tRes.ok) throw new Error();
                 tutorData = await tRes.json();
                 
                 tutorDisplay.textContent = 'Репетитор: ' + tutorData.name;
 
-                // Dynamically update primary brand colors matching tutor configuration
-                if (tutorData.accent_color) {
-                    document.documentElement.style.setProperty('--primary', tutorData.accent_color);
-                    document.documentElement.style.setProperty('--primary-glow', tutorData.accent_color + '26');
-                }
-
                 // Fetch Services
-                const sRes = await fetch(`${API_BASE}/tutors/${id}/services`);
+                const sRes = await apiFetch(`/tutors/${id}/services`);
                 const services = await sRes.json();
                 serviceSelect.innerHTML = '<option value="">Выберите учебную услугу...</option>' +
                     services.map(s => `<option value="${s.id}" data-price="${s.price || 0}" data-name="${s.name}">${s.name} (${s.duration} мин) ${s.price ? '— ' + s.price + ' ₽' : ''}</option>`).join('');
@@ -785,7 +1148,8 @@
                 fetchSlots();
             } catch (err) {
                 console.error("Error loading tutor data:", err);
-                tutorDisplay.textContent = 'Ошибка загрузки данных профиля';
+                const fetchUrl = `${API_BASE}/tutors/${id}`;
+                tutorDisplay.textContent = `Ошибка (ID: ${id}, API: ${fetchUrl}, Error: ${err.message || err}, Stack: ${err.stack ? err.stack.toString().substring(0, 150) : 'no stack'})`;
                 tutorDisplay.style.background = '#fef2f2';
                 tutorDisplay.style.color = '#ef4444';
             }
@@ -799,6 +1163,14 @@
             const urlParams = new URLSearchParams(window.location.search);
             const paramUsername = urlParams.get('tg_username');
             const paramUserId = urlParams.get('tg_id');
+            
+            // Check for reschedule booking parameter
+            const paramRescheduleBookingId = urlParams.get('reschedule_booking_id');
+            if (paramRescheduleBookingId) {
+                const isTutorMode = urlParams.get('tutor_mode') === 'true';
+                await initRescheduleMode(parseInt(paramRescheduleBookingId), isTutorMode);
+                return;
+            }
             console.log("URL params - tg_username:", paramUsername, "tg_id:", paramUserId);
 
             if (paramUsername && paramUsername !== 'None' && paramUsername !== 'null') {
@@ -851,10 +1223,12 @@
             if (tgUsername) {
                 tgUserInput.value = tgUsername;
                 tgUserInput.disabled = true; // Lock field
-                tgLinkedBadge.innerHTML = '<span>🛡️ Авторизован через Telegram</span>';
+                tgLinkedBadge.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:inline-block; vertical-align:middle; margin-right:4px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15.82-.67 3.85-.93 5.27-.11.6-.33.8-.54.82-.46.04-.81-.31-1.26-.6-0.7-.46-1.1-0.74-1.78-1.19-.79-.52-.28-.8.17-1.27.12-.12 2.13-1.95 2.17-2.12.01-.02.01-.11-.04-.16-.06-.05-.14-.03-.2-.02-.09.02-1.48.94-4.19 2.76-.4.27-.76.4-1.08.4-.35-.01-1.02-.2-1.52-.36-.61-.2-1.1-.31-1.05-.66.02-.18.27-.37.75-.56 2.94-1.28 4.91-2.13 5.9-2.54 2.82-1.18 3.4-1.39 3.79-1.39.08 0 .28.02.4.12.1.09.13.22.14.31-.01.07.01.2-.01.29z"/></svg>
+                <span>Авторизован как @${tgUsername}</span>`;
                 tgLinkedBadge.style.display = 'flex';
             } else if (tgUserId) {
-                tgLinkedBadge.innerHTML = '<span>🛡️ Подключен через Telegram ID</span>';
+                tgLinkedBadge.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:inline-block; vertical-align:middle; margin-right:4px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15.82-.67 3.85-.93 5.27-.11.6-.33.8-.54.82-.46.04-.81-.31-1.26-.6-0.7-.46-1.1-0.74-1.78-1.19-.79-.52-.28-.8.17-1.27.12-.12 2.13-1.95 2.17-2.12.01-.02.01-.11-.04-.16-.06-.05-.14-.03-.2-.02-.09.02-1.48.94-4.19 2.76-.4.27-.76.4-1.08.4-.35-.01-1.02-.2-1.52-.36-.61-.2-1.1-.31-1.05-.66.02-.18.27-.37.75-.56 2.94-1.28 4.91-2.13 5.9-2.54 2.82-1.18 3.4-1.39 3.79-1.39.08 0 .28.02.4.12.1.09.13.22.14.31-.01.07.01.2-.01.29z"/></svg>
+                <span>Авторизован через Telegram ID: ${tgUserId}</span>`;
                 tgLinkedBadge.style.display = 'flex';
             }
 
@@ -866,23 +1240,137 @@
                 fetchTutors('telegram_id=' + tgUserId);
             }
 
-            // Add change listener to phone input to fetch tutors by phone
+            // Add change/blur listener to phone input to format and normalize the input value
             const phoneInput = document.getElementById('phone');
             if (phoneInput) {
-                phoneInput.addEventListener('change', () => {
-                    const cleanPhone = phoneInput.value.replace(/[^0-9]/g, '');
-                    if (cleanPhone.length >= 10) {
-                        fetchTutors('phone=' + cleanPhone);
+                const handlePhoneChange = () => {
+                    let rawVal = phoneInput.value.trim();
+                    if (!rawVal) return;
+
+                    // Normalize
+                    let cleanDigits = rawVal.replace(/\D/g, '');
+
+                    if (cleanDigits.length === 11 && (cleanDigits.startsWith('89') || cleanDigits.startsWith('79'))) {
+                        cleanDigits = '79' + cleanDigits.slice(2);
+                    } else if (cleanDigits.length === 10 && cleanDigits.startsWith('9')) {
+                        cleanDigits = '79' + cleanDigits.slice(1);
                     }
-                });
+
+                    // Format and update input value
+                    let formatted = formatPhone(cleanDigits);
+                    phoneInput.value = formatted;
+
+                    // Fetch tutors with the raw digits
+                    if (cleanDigits.length === 11 && cleanDigits.startsWith('79')) {
+                        fetchTutors('phone=' + cleanDigits);
+                    }
+                };
+                phoneInput.addEventListener('change', handlePhoneChange);
+                phoneInput.addEventListener('blur', handlePhoneChange);
             }
 
             // Load saved contacts from localStorage (populates phone and fetches tutors)
             loadSavedStudentContacts();
 
             // Set up date/service change listeners once
-            serviceSelect.addEventListener('change', fetchSlots);
-            dateInput.addEventListener('change', fetchSlots);
+            serviceSelect.addEventListener('change', () => {
+                fetchSlots();
+                const nextBtn = document.getElementById('next-step-btn');
+                if (nextBtn) nextBtn.disabled = !serviceSelect.value;
+            });
+            dateInput.addEventListener('change', () => {
+                fetchSlots();
+                if (!rescheduleBookingId) {
+                    const nextBtn = document.getElementById('next-step-btn');
+                    if (nextBtn) nextBtn.disabled = true;
+                }
+            });
+
+            // Initialize step 1
+            showStep(1);
+        }
+
+        async function initRescheduleMode(bookingId, isTutorMode) {
+            rescheduleBookingId = bookingId;
+            tutorMode = isTutorMode;
+            
+            // Hide standard dropdowns/labels
+            tutorDisplay.style.display = 'none';
+            document.getElementById('tutor-select-container').style.display = 'none';
+            
+            // Hide other sections of the form
+            document.getElementById('section-service').style.display = 'none';
+            document.getElementById('section-contacts').style.display = 'none';
+            document.getElementById('section-payment').style.display = 'none';
+
+            // Hide step wizard elements for reschedule mode
+            const stepsProgress = document.getElementById('steps-progress');
+            if (stepsProgress) stepsProgress.style.display = 'none';
+            
+            const stepNavigation = document.getElementById('step-navigation-box');
+            if (stepNavigation) stepNavigation.style.display = 'none';
+
+            // Show step-2 content directly
+            document.getElementById('step-1').style.display = 'none';
+            document.getElementById('step-2').classList.add('active');
+            document.getElementById('step-3').style.display = 'none';
+            
+            // Make sure the main submit button is visible
+            submitBtn.style.display = 'block';
+            
+            // Remove required fields
+            document.getElementById('full-name').removeAttribute('required');
+            document.getElementById('phone').removeAttribute('required');
+            
+            // Update button label
+            submitBtn.textContent = 'Подтвердить перенос';
+            
+            // Show reschedule box
+            const infoBox = document.getElementById('reschedule-info-box');
+            infoBox.style.display = 'block';
+            
+            try {
+                // Fetch reschedule info
+                const res = await apiFetch(`/bookings/${bookingId}/reschedule-info`);
+                if (!res.ok) throw new Error("Запись не найдена или недоступна для переноса.");
+                const info = await res.json();
+                
+                // Populate reschedule box
+                document.getElementById('reschedule-student').textContent = info.student_name;
+                document.getElementById('reschedule-service').textContent = info.service_name;
+                document.getElementById('reschedule-current-time').textContent = info.current_time;
+                
+                tutorId = info.tutor_id;
+                
+                // Unified brand color is set in CSS (:root variables), dynamic overrides disabled.
+                /*
+                try {
+                    const tRes = await apiFetch(`/tutors/${tutorId}`);
+                    if (tRes.ok) {
+                        const tData = await tRes.json();
+                        tutorData = tData;
+                        if (tData.accent_color) {
+                            document.documentElement.style.setProperty('--primary', tData.accent_color);
+                            document.documentElement.style.setProperty('--primary-glow', tData.accent_color + '26');
+                        }
+                    }
+                } catch (colorErr) {
+                    console.error("Error setting custom accent colors:", colorErr);
+                }
+                */
+                
+                // Pre-populate service value for fetchSlots
+                serviceSelect.innerHTML = `<option value="${info.service_id}" selected>${info.service_name}</option>`;
+                
+                // Set up event listeners (only date input changes slot grid now since service is hidden)
+                dateInput.addEventListener('change', fetchSlots);
+                
+                // Trigger initial slot fetch
+                await fetchSlots();
+            } catch (err) {
+                console.error("Error initializing reschedule mode:", err);
+                infoBox.innerHTML = `<div style="color: #ef4444; font-weight: 600;">Ошибка: ${err.message || err}</div>`;
+            }
         }
 
         function setupTutorsDropdown(tutorsList) {
@@ -914,7 +1402,7 @@
         async function fetchTutors(query) {
             if (tutorsLoaded) return;
             try {
-                const tutorsRes = await fetch(`${API_BASE}/tutors/by-student?${query}`);
+                const tutorsRes = await apiFetch(`/tutors/by-student?${query}`);
                 if (tutorsRes.ok) {
                     const tutorsList = await tutorsRes.json();
                     const hasCurrent = tutorsList.some(t => parseInt(t.id) === parseInt(tutorId));
@@ -970,10 +1458,13 @@
 
             slotsGrid.innerHTML = '<div class="no-slots"><span class="loader" style="border-top-color: var(--primary);"></span> Поиск свободных окон...</div>';
             selectedTimeInput.value = '';
+            
             submitBtn.disabled = true;
+            const nextBtn = document.getElementById('next-step-btn');
+            if (nextBtn) nextBtn.disabled = true;
 
             try {
-                const res = await fetch(`${API_BASE}/tutors/${tutorId}/slots?service_id=${serviceId}&date=${date}`);
+                const res = await apiFetch(`/tutors/${tutorId}/slots?service_id=${serviceId}&date=${date}`);
                 const data = await res.json();
 
                 if (data.available_slots && data.available_slots.length > 0) {
@@ -992,7 +1483,13 @@
             document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
             btn.classList.add('selected');
             selectedTimeInput.value = time;
-            submitBtn.disabled = false;
+            
+            if (rescheduleBookingId) {
+                submitBtn.disabled = false;
+            } else {
+                const nextBtn = document.getElementById('next-step-btn');
+                if (nextBtn) nextBtn.disabled = false;
+            }
         };
 
         window.updatePaymentCard = (radio) => {
@@ -1001,8 +1498,8 @@
             radio.parentElement.classList.add('active');
         };
 
-        serviceSelect.addEventListener('change', fetchSlots);
-        dateInput.addEventListener('change', fetchSlots);
+        // NOTE: Event listeners for serviceSelect/dateInput are registered
+        // inside init() — no duplicates here.
 
         let pendingPayload = null;
 
@@ -1043,13 +1540,17 @@
 
         async function submitBookingPayload(payload) {
             try {
-                const res = await fetch(`${API_BASE}/bookings/`, {
+                const res = await apiFetch(`/bookings/`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    showStatus('✅ Вы успешно записаны! Заявка отправлена на подтверждение.', 'success');
+                    if (payload.payment_method === 'transfer') {
+                        showStatus('✅ Заявка отправлена! Дождитесь подтверждения оплаты преподавателем в Telegram.', 'success');
+                    } else {
+                        showStatus('✅ Вы успешно записаны! Заявка отправлена в расписание.', 'success');
+                    }
                     
                     try {
                         localStorage.setItem('al_full_name', payload.full_name);
@@ -1090,7 +1591,12 @@
                         } else if (Array.isArray(data.detail)) {
                             errorMsg = data.detail.map(err => {
                                 const field = err.loc ? err.loc[err.loc.length - 1] : 'поле';
-                                return `${field}: ${err.msg}`;
+                                const fieldRussian = field === 'phone' ? 'Телефон' : (field === 'full_name' ? 'Имя' : (field === 'service_id' ? 'Услуга' : field));
+                                let msg = err.msg;
+                                if (err.type === 'value_error' && msg.includes('Value error, ')) {
+                                    msg = msg.replace('Value error, ', '');
+                                }
+                                return `${fieldRussian}: ${msg}`;
                             }).join(', ');
                         } else if (typeof data.detail === 'object') {
                             errorMsg = JSON.stringify(data.detail);
@@ -1120,6 +1626,51 @@
             const time = selectedTimeInput.value;
             if (!time) { alert('Пожалуйста, выберите доступное время занятия!'); return; }
 
+            if (rescheduleBookingId) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="loader"></span> Оформление переноса...';
+                
+                const payload = {
+                    appointment_time: `${dateInput.value}T${time}:00`,
+                    is_student: !tutorMode,
+                    tutor_mode: tutorMode
+                };
+                
+                try {
+                    const res = await apiFetch(`/bookings/${rescheduleBookingId}/reschedule-from-web`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    if (res.ok) {
+                        const statusMsgText = tutorMode 
+                            ? '✅ Занятие успешно перенесено!' 
+                            : '✅ Запрос на перенос отправлен преподавателю на подтверждение.';
+                        showStatus(statusMsgText, 'success');
+                        
+                        if (tg) {
+                            setTimeout(() => {
+                                tg.close();
+                            }, 1600);
+                        }
+                    } else {
+                        const data = await res.json();
+                        const errorMsg = (data && data.detail) ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : 'неизвестно';
+                        alert('❌ Ошибка переноса: ' + errorMsg);
+                        showStatus('❌ Ошибка переноса: ' + errorMsg, 'error');
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = 'Подтвердить перенос';
+                    }
+                } catch (err) {
+                    alert('❌ Сетевая ошибка при отправке запроса');
+                    showStatus('❌ Сетевая ошибка при отправке запроса', 'error');
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = 'Подтвердить перенос';
+                }
+                return;
+            }
+
             const serviceOpt = serviceSelect.options[serviceSelect.selectedIndex];
             const serviceName = serviceOpt.getAttribute('data-name') || '';
             const servicePrice = parseInt(serviceOpt.getAttribute('data-price') || '0');
@@ -1127,12 +1678,20 @@
             // Clean phone number format for API regex matching
             let rawPhone = document.getElementById('phone').value.trim();
             let digits = rawPhone.replace(/\D/g, '');
-            if (digits.length === 11 && digits.startsWith('8')) {
-                digits = '7' + digits.slice(1);
-            } else if (digits.length === 10) {
-                digits = '7' + digits;
+            if (digits.length === 11 && (digits.startsWith('89') || digits.startsWith('79'))) {
+                digits = '79' + digits.slice(2);
+            } else if (digits.length === 10 && digits.startsWith('9')) {
+                digits = '79' + digits.slice(1);
             }
             const cleanPhone = digits ? '+' + digits : '';
+
+            // Phone Validation check (client side)
+            const phoneRegex = /^\+79\d{9}$/;
+            if (cleanPhone && !phoneRegex.test(cleanPhone)) {
+                alert('Пожалуйста, введите корректный мобильный номер телефона РФ (например, +79109215428)');
+                document.getElementById('phone').focus();
+                return;
+            }
 
             // Clean Telegram username format
             let rawUsername = (tgUsername || tgUserInput.value || '').trim();
@@ -1142,7 +1701,9 @@
                 full_name: document.getElementById('full-name').value.trim(),
                 phone: cleanPhone,
                 service_id: parseInt(serviceSelect.value),
-                appointment_time: new Date(`${dateInput.value}T${time}`).toISOString(),
+                // BUG #007 fix: Send the raw date+time as-is (already in MSK from server slots).
+                // Do NOT use `new Date()` which would reinterpret in the browser's local timezone.
+                appointment_time: `${dateInput.value}T${time}:00`,
                 tutor_id: parseInt(tutorId),
                 telegram_username: formattedUsername,
                 telegram_id: tgUserId || null,
@@ -1179,39 +1740,7 @@
                     bankRow.style.display = 'none';
                 }
 
-                // Handle SBP QR Code generation/display
-                const qrContainer = document.getElementById('modal-qr-container');
-                let qrSourceUrl = null;
-                
-                if (tutorData.sbp_qr_url) {
-                    // Use uploaded static QR code image
-                    qrSourceUrl = tutorData.sbp_qr_url;
-                } else if (tutorData.sbp_link) {
-                    // Generate QR code for custom payment link
-                    qrSourceUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(tutorData.sbp_link)}`;
-                } else if (sbpPhoneVal) {
-                    // If no explicit link/image, but phone is present:
-                    // If bank is Tinkoff, generate direct Tinkoff RM link.
-                    const cleanPhone = sbpPhoneVal.replace(/[^0-9]/g, '');
-                    const sbpBankLower = (sbpBankVal || '').toLowerCase();
-                    const isTinkoff = sbpBankLower.includes('тинькофф') || sbpBankLower.includes('tinkoff') || sbpBankLower.includes('т-банк') || sbpBankLower.includes('т банк');
-                    
-                    if (isTinkoff && cleanPhone) {
-                        const tLink = `https://www.tinkoff.ru/rm/${cleanPhone}/`;
-                        qrSourceUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(tLink)}`;
-                    } else {
-                        // Fallback to text QR or placeholder
-                        const infoText = `Перевод ${servicePrice} р. по СБП в ${sbpBankVal} на номер ${sbpPhoneVal}`;
-                        qrSourceUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(infoText)}`;
-                    }
-                }
-
-                if (qrSourceUrl) {
-                    qrContainer.innerHTML = `<img src="${qrSourceUrl}" alt="QR СБП">`;
-                    qrContainer.style.display = 'flex';
-                } else {
-                    qrContainer.style.display = 'none';
-                }
+                // Simplified SBP logic: No QR code generation needed
 
                 // Show modal
                 document.getElementById('sbp-modal').classList.add('show');
@@ -1239,9 +1768,7 @@
             <div id="modal-service-name" style="font-size: 14px; color: var(--text-muted); margin-bottom: 6px;"></div>
             <div class="modal-amount" id="modal-amount-display">0 ₽</div>
 
-            <div class="sbp-qr-container" id="modal-qr-container">
-                <!-- QR code image will be rendered here -->
-            </div>
+            <!-- QR code removed -->
 
             <div class="sbp-details-box">
                 <div class="sbp-details-row">

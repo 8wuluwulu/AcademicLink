@@ -104,7 +104,7 @@ async def seeded_session(session: AsyncSession):
 
     student = Student(
         full_name="Test Student",
-        phone="+998901234567",
+        phone="+79001234567",
         telegram_id=987654321,
     )
     session.add(student)

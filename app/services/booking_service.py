@@ -80,12 +80,14 @@ async def check_double_booking(
     day_start = appointment_time.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
     day_end = appointment_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=2)
 
+    # BUG #002 fix: acquire row-level locks on conflicting bookings
+    # to prevent concurrent requests from passing the overlap check simultaneously.
     stmt = select(Booking, Service).join(Service, isouter=True).where(
         Booking.tutor_id == tutor_id,
         Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.PENDING]),
         Booking.appointment_time >= day_start,
         Booking.appointment_time < day_end,
-    )
+    ).with_for_update(of=Booking, skip_locked=False)
     if exclude_booking_id is not None:
         stmt = stmt.where(Booking.id != exclude_booking_id)
         
@@ -130,8 +132,11 @@ async def create_booking_from_web(
     payment_method: str = "cash",
     payment_comment: str | None = None,
 ) -> Booking:
+    # BUG #007: Frontend sends times in MSK (tutor's local time from slots).
+    # If naive (no tzinfo), interpret as MSK and convert to UTC.
     if appointment_time.tzinfo is None:
-        appointment_time = appointment_time.replace(tzinfo=timezone.utc)
+        from app.bot.formatting import MSK
+        appointment_time = appointment_time.replace(tzinfo=MSK).astimezone(timezone.utc)
 
     # 1. Resolve Service
     service = await session.get(Service, service_id)
@@ -321,8 +326,6 @@ async def get_available_slots(
         if current_time < now_local:
             minutes = (now_local.minute // 15 + 1) * 15
             current_time = now_local.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=minutes)
-            if current_time < local_date.replace(hour=slot.start_time.hour, minute=slot.start_time.minute):
-                current_time = local_date.replace(hour=slot.start_time.hour, minute=slot.start_time.minute)
 
         while current_time + timedelta(minutes=duration) <= end_time:
             candidate_start = current_time.astimezone(timezone.utc)
@@ -333,6 +336,8 @@ async def get_available_slots(
                 # Skip sync events that correspond to the current booking if we exclude it
                 # (Not needed in get_available_slots, but good pattern)
                 b_start = b.appointment_time
+                if b_start.tzinfo is None:
+                    b_start = b_start.replace(tzinfo=timezone.utc)
                 b_dur = s.duration if s else 60
                 b_buf = s.buffer_time if s else 0
                 b_end = b_start + timedelta(minutes=b_dur + b_buf)
@@ -343,7 +348,13 @@ async def get_available_slots(
             
             if not overlap:
                 for a in absences:
-                    if candidate_start < a.end_time and candidate_end > a.start_time:
+                    a_start = a.start_time
+                    if a_start.tzinfo is None:
+                        a_start = a_start.replace(tzinfo=timezone.utc)
+                    a_end = a.end_time
+                    if a_end.tzinfo is None:
+                        a_end = a_end.replace(tzinfo=timezone.utc)
+                    if candidate_start < a_end and candidate_end > a_start:
                         overlap = True
                         break
 
@@ -382,6 +393,12 @@ async def reschedule_booking(
 
     if not booking:
         raise ValueError("Запись не найдена.")
+
+    booking_time = booking.appointment_time
+    if booking_time.tzinfo is None:
+        booking_time = booking_time.replace(tzinfo=timezone.utc)
+    if booking_time == new_appointment_time:
+        raise ValueError("Вы выбрали то же самое время, что и установлено сейчас.")
     
     # Fetch service manually if not loaded
     service = await session.get(Service, booking.service_id) if booking.service_id else None
@@ -404,12 +421,9 @@ async def reschedule_booking(
     booking.status = BookingStatus.CONFIRMED
     await session.commit()
 
-    # Sync with Google Calendar if enabled
-    from app.services.google_calendar_service import sync_booking_to_calendar
-    try:
-        await sync_booking_to_calendar(session, booking)
-    except Exception as exc:
-        logger.error("Failed to sync rescheduled booking #%d to Google Calendar: %s", booking.id, exc)
+    # NOTE (BUG #009): Google Calendar sync is NOT called here.
+    # The caller is responsible for syncing after this function returns,
+    # to avoid duplicate calendar events.
 
     await session.refresh(booking, attribute_names=["student", "tutor"])
     return booking, old_time
@@ -468,6 +482,8 @@ async def create_booking_internal(
     return result.scalar_one()
 
 
+# BUG #029: This function currently has no callers in the codebase.
+# TODO: Wire into a handler or remove in a future cleanup.
 async def record_student_no_show(
     session: AsyncSession,
     *,

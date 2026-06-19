@@ -5,7 +5,7 @@ Endpoints for fetching tutor information, services, and availability slots.
 """
 
 import logging
-from datetime import date as dt_date, datetime, time
+from datetime import date as dt_date, datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -23,7 +23,8 @@ router = APIRouter(prefix="/tutors", tags=["Tutors"])
 
 # ── Pydantic Schemas ─────────────────────────────────────────────────
 
-class TutorRead(BaseModel):
+class TutorPublicRead(BaseModel):
+    """Public tutor info — excludes sensitive SBP banking details."""
     id: int
     name: str
     is_active: bool
@@ -31,13 +32,17 @@ class TutorRead(BaseModel):
     bio: str | None = None
     subject: str | None = None
     avatar_url: str | None = None
-    accent_color: str = "#4f46e5"
+    accent_color: str = "#0284C7"
+
+    model_config = {"from_attributes": True}
+
+
+class TutorRead(TutorPublicRead):
+    """Full tutor info with SBP details — used in payment/booking contexts."""
     sbp_phone: str | None = None
     sbp_bank: str | None = None
     sbp_qr_url: str | None = None
     sbp_link: str | None = None
-
-    model_config = {"from_attributes": True}
 
 
 class ServiceRead(BaseModel):
@@ -59,9 +64,9 @@ class SlotsResponse(BaseModel):
 
 # ── Routes ───────────────────────────────────────────────────────────
 
-@router.get("/", response_model=list[TutorRead])
+@router.get("/", response_model=list[TutorPublicRead])
 async def list_tutors(session: AsyncSession = Depends(get_session)):
-    """List all active tutors."""
+    """List all active tutors (public info only)."""
     result = await session.execute(select(Tutor).where(Tutor.is_active == True))
     return result.scalars().all()
 
@@ -72,7 +77,7 @@ async def get_tutors_by_student(
     phone: str | None = Query(None, description="Phone number of the student"),
     session: AsyncSession = Depends(get_session),
 ) -> list[TutorRead]:
-    """Get list of active tutors associated with a student."""
+    """Get list of active tutors associated with a student (includes SBP for booking flow)."""
     if not telegram_id and not phone:
         return []
     
@@ -81,17 +86,17 @@ async def get_tutors_by_student(
         stmt = stmt.join(StudentTutorLink, StudentTutorLink.tutor_id == Tutor.id).join(Student, Student.id == StudentTutorLink.student_id).where(Student.telegram_id == telegram_id)
     elif phone:
         digits = "".join(c for c in phone if c.isdigit())
-        if len(digits) == 11 and digits.startswith("8"):
-            digits = "7" + digits[1:]
-        elif len(digits) == 10:
-            digits = "7" + digits
+        if len(digits) == 11 and (digits.startswith("89") or digits.startswith("79")):
+            digits = "79" + digits[2:]
+        elif len(digits) == 10 and digits.startswith("9"):
+            digits = "79" + digits[1:]
         normalized = f"+{digits}"
         
         stmt = stmt.join(StudentTutorLink, StudentTutorLink.tutor_id == Tutor.id).join(Student, Student.id == StudentTutorLink.student_id).where(
             (Student.phone == phone) | (Student.phone == normalized) | (Student.phone == digits)
         )
         
-    stmt = stmt.where(Tutor.is_active == True)
+    stmt = stmt.where(Tutor.is_active == True, StudentTutorLink.is_active == True)
     result = await session.execute(stmt)
     tutors = result.scalars().all()
     return tutors
@@ -99,7 +104,7 @@ async def get_tutors_by_student(
 
 @router.get("/{tutor_id}", response_model=TutorRead)
 async def get_tutor(tutor_id: int, session: AsyncSession = Depends(get_session)):
-    """Get details for a specific tutor."""
+    """Get details for a specific tutor (includes SBP for payment modal)."""
     tutor = await session.get(Tutor, tutor_id)
     if not tutor:
         raise HTTPException(status_code=404, detail="Tutor not found")
@@ -126,7 +131,10 @@ async def get_tutor_slots(
     Get available booking slots for a tutor and service on a specific date.
     Returns a list of start times (HH:MM).
     """
-    dt = datetime.combine(date, time.min)
+    # BUG #006 fix: attach MSK timezone explicitly to avoid
+    # server-local-time interpretation in .astimezone(MSK)
+    from app.bot.formatting import MSK
+    dt = datetime.combine(date, time.min, tzinfo=MSK)
     slots = await get_available_slots(session, tutor_id=tutor_id, service_id=service_id, date=dt)
     
     return SlotsResponse(

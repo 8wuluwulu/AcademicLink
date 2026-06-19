@@ -69,3 +69,69 @@ async def test_check_tutor_absence_helper(seeded_session):
     
     with pytest.raises(ValueError, match="Vacation"):
         await check_tutor_absence(seeded_session, tutor_id=tutor.id, appointment_time=appt)
+
+
+@pytest.mark.asyncio
+async def test_cb_quick_block_today_no_slots(seeded_session):
+    """Test cb_quick_block_today when no slots are defined today (fixing UnboundLocalError)."""
+    from app.bot.handlers import cb_quick_block_today
+    from app.db.models import Tutor, AvailabilitySlot
+    from unittest.mock import AsyncMock, patch
+    
+    # Get a tutor
+    result = await seeded_session.execute(select(Tutor).limit(1))
+    tutor = result.scalar_one()
+    
+    # Delete all their availability slots for today so last_slot is None
+    # Let's get today's weekday
+    from app.bot.formatting import MSK
+    now_local = datetime.now(MSK)
+    today_weekday = now_local.weekday()
+    
+    # Delete availability slots for this weekday
+    from sqlalchemy import delete
+    await seeded_session.execute(
+        delete(AvailabilitySlot).where(
+            AvailabilitySlot.tutor_id == tutor.id,
+            AvailabilitySlot.weekday == today_weekday
+        )
+    )
+    await seeded_session.commit()
+    
+    # Mock CallbackQuery
+    callback = AsyncMock()
+    callback.from_user.id = tutor.tg_id
+    callback.message = AsyncMock()
+    callback.answer = AsyncMock()
+    
+    # MockAsyncSessionContext class
+    class MockAsyncSessionContext:
+        def __init__(self, sess):
+            self.sess = sess
+        async def __aenter__(self):
+            return self.sess
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    # Patch session factory and show_absence_manager
+    with patch("app.bot.handlers.async_session_factory", return_value=MockAsyncSessionContext(seeded_session)), \
+         patch("app.bot.handlers._show_absence_manager") as mock_show_absence:
+         
+        await cb_quick_block_today(callback)
+        
+        # Verify absence is created
+        result = await seeded_session.execute(
+            select(TutorAbsence).where(TutorAbsence.tutor_id == tutor.id)
+        )
+        absences = result.scalars().all()
+        assert len(absences) >= 1
+        
+        # Verify quick block message was sent successfully
+        callback.message.answer.assert_called_once()
+        sent_text = callback.message.answer.call_args[0][0]
+        assert "⚡️ <b>Время занято!</b>" in sent_text
+        assert "до 23:59" in sent_text
+        
+        # Verify callback.answer was called
+        callback.answer.assert_called_once()
+

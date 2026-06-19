@@ -33,7 +33,15 @@ async_session_factory = async_sessionmaker(
 
 # ── Table Creation ───────────────────────────────────────────────────
 def _auto_migrate_columns(connection) -> None:
-    """Helper to inspect existing tables and add missing columns dynamically."""
+    """Helper to inspect existing tables and add missing columns dynamically.
+
+    .. warning::
+        BUG #008: This is a development convenience, NOT a production migration tool.
+        Use Alembic for all production schema changes. Failures are now logged
+        instead of being silently swallowed.
+    """
+    import logging
+    _logger = logging.getLogger(__name__)
     from sqlalchemy import inspect, text
     inspector = inspect(connection)
     
@@ -55,7 +63,7 @@ def _auto_migrate_columns(connection) -> None:
         if 'avatar_url' not in tutors_cols:
             connection.execute(text("ALTER TABLE tutors ADD COLUMN avatar_url VARCHAR(512)"))
         if 'accent_color' not in tutors_cols:
-            connection.execute(text("ALTER TABLE tutors ADD COLUMN accent_color VARCHAR(10) DEFAULT '#4f46e5'"))
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN accent_color VARCHAR(10) DEFAULT '#0284C7'"))
         if 'sbp_phone' not in tutors_cols:
             connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_phone VARCHAR(20)"))
         if 'sbp_bank' not in tutors_cols:
@@ -64,6 +72,8 @@ def _auto_migrate_columns(connection) -> None:
             connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_qr_url VARCHAR(512)"))
         if 'sbp_link' not in tutors_cols:
             connection.execute(text("ALTER TABLE tutors ADD COLUMN sbp_link VARCHAR(512)"))
+        if 'subscription_warned_at' not in tutors_cols:
+            connection.execute(text("ALTER TABLE tutors ADD COLUMN subscription_warned_at TIMESTAMP WITH TIME ZONE"))
             
     # Check bookings columns
     if 'bookings' in inspector.get_table_names():

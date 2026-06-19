@@ -118,7 +118,7 @@ def fmt_month_year(dt: datetime) -> str:
 
 def fmt_phone_links(phone: str) -> str:
     """Build a clickable tel: link for a phone number."""
-    return f'📞 <a href="tel:{phone}">{phone}</a>'
+    return f'Телефон: <a href="tel:{phone}">{phone}</a>'
 
 
 def fmt_contact_links(
@@ -127,18 +127,14 @@ def fmt_contact_links(
 ) -> str:
     """
     Build Telegram-native contact links.
-
-    Priority:
-    1. If telegram_username is set → t.me/{username}
-    2. Fallback → tel: link only
     """
     parts = [fmt_phone_links(phone)]
 
     if telegram_username:
         clean = telegram_username.lstrip("@")
-        parts.append(f'💬 <a href="https://t.me/{clean}">Написать в Telegram</a>')
+        parts.append(f'Telegram: <a href="https://t.me/{clean}">@{clean}</a>')
     else:
-        parts.append("<i>Telegram не указан</i>")
+        parts.append("Telegram: <i>не указан</i>")
 
     return "\n".join(parts)
 
