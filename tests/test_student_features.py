@@ -592,6 +592,134 @@ async def test_cmd_my_bookings(seeded_session: AsyncSession):
         assert len(kb.inline_keyboard) == 2
 
 
+@pytest.mark.asyncio
+async def test_support_flow_tutor(seeded_session: AsyncSession):
+    """Test tutor support contact flow: initiation, cancel, submit, admin reply."""
+    from app.bot.handlers import (
+        cb_contact_support,
+        process_support_message,
+        cb_admin_support_reply,
+        process_admin_support_reply,
+        SupportStates,
+    )
+    from app.core.config import settings
+
+    # --- 1. Initiate support contact ---
+    callback = AsyncMock()
+    callback.data = "tutor_contact_support"
+    callback.message = AsyncMock()
+    callback.answer = AsyncMock()
+
+    state = AsyncMock()
+    state.set_state = AsyncMock()
+    state.update_data = AsyncMock()
+
+    await cb_contact_support(callback, state)
+    state.set_state.assert_called_once_with(SupportStates.waiting_message)
+    state.update_data.assert_called_once_with(is_tutor=True)
+    assert "Напишите ваше сообщение" in callback.message.answer.call_args[0][0]
+
+    # --- 2. Process support cancel ---
+    msg_cancel = AsyncMock()
+    msg_cancel.text = "/cancel"
+    msg_cancel.from_user.id = 111  # Tutor ID from conftest seeding
+    
+    state.clear = AsyncMock()
+    state.get_data = AsyncMock(return_value={"is_tutor": True})
+
+    with patch("app.bot.handlers.async_session_factory", return_value=MockAsyncSessionContext(seeded_session)):
+        await process_support_message(msg_cancel, state)
+        state.clear.assert_called_once()
+
+    # --- 3. Process support message submission ---
+    msg_submit = AsyncMock()
+    msg_submit.text = "Hello support team"
+    msg_submit.from_user.id = 111
+    msg_submit.from_user.full_name = "Tutor FIO"
+    msg_submit.from_user.username = "tutor_username"
+
+    state_submit = AsyncMock()
+    state_submit.get_data = AsyncMock(return_value={"is_tutor": True})
+    state_submit.clear = AsyncMock()
+
+    # Temporarily set admin settings
+    original_admin = settings.admin_tg_id
+    settings.admin_tg_id = 99999
+    
+    try:
+        with patch("app.bot.handlers.async_session_factory", return_value=MockAsyncSessionContext(seeded_session)), \
+             patch("app.core.bot.get_bot") as mock_get_bot:
+            
+            mock_bot = AsyncMock()
+            mock_get_bot.return_value = mock_bot
+            
+            await process_support_message(msg_submit, state_submit)
+            
+            state_submit.clear.assert_called_once()
+            mock_bot.send_message.assert_called_once()
+            admin_msg = mock_bot.send_message.call_args[1]["text"]
+            assert "Hello support team" in admin_msg
+            assert "Репетитор" in admin_msg
+            assert "99999" != str(msg_submit.from_user.id) # it forwards to admin, not sender
+            
+    finally:
+        settings.admin_tg_id = original_admin
+
+
+@pytest.mark.asyncio
+async def test_support_flow_admin_reply(seeded_session: AsyncSession):
+    """Test administrator replying to a support ticket."""
+    from app.bot.handlers import (
+        cb_admin_support_reply,
+        process_admin_support_reply,
+        SupportStates,
+    )
+    from app.core.config import settings
+
+    original_admin = settings.admin_tg_id
+    settings.admin_tg_id = 99999
+
+    try:
+        # --- 1. Admin initiates reply ---
+        callback = AsyncMock()
+        callback.data = "admin_support_reply:333"  # target student id
+        callback.from_user.id = 99999  # is admin
+        callback.message = AsyncMock()
+        callback.answer = AsyncMock()
+
+        state = AsyncMock()
+        state.set_state = AsyncMock()
+        state.update_data = AsyncMock()
+
+        await cb_admin_support_reply(callback, state)
+        state.set_state.assert_called_once_with(SupportStates.waiting_admin_reply)
+        state.update_data.assert_called_once_with(target_user_id=333)
+
+        # --- 2. Admin submits reply ---
+        msg_reply = AsyncMock()
+        msg_reply.from_user.id = 99999
+        msg_reply.text = "This is support replying to your issue."
+
+        state_reply = AsyncMock()
+        state_reply.get_data = AsyncMock(return_value={"target_user_id": 333})
+        state_reply.clear = AsyncMock()
+
+        with patch("app.core.bot.get_bot") as mock_get_bot:
+            mock_bot = AsyncMock()
+            mock_get_bot.return_value = mock_bot
+
+            await process_admin_support_reply(msg_reply, state_reply)
+
+            state_reply.clear.assert_called_once()
+            mock_bot.send_message.assert_called_once()
+            user_msg = mock_bot.send_message.call_args[1]["text"]
+            assert "This is support replying to your issue" in user_msg
+            assert mock_bot.send_message.call_args[1]["chat_id"] == 333
+
+    finally:
+        settings.admin_tg_id = original_admin
+
+
 
 
 

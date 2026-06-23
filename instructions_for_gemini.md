@@ -82,3 +82,10 @@
   * Google Calendar sync refresh bug fixed.
   * Shortened callback prefix for reschedule rejection implemented.
   * Integration tests added and verified.
+  * **Tutor subscriptions listing inside `/admin` dashboard**: shows copyable tutor IDs, display names, and color-coded status info with dates in MSK timezone.
+  * **Strict subscription lifecycle blocks**: expired/revoked tutors are blocked from P2P confirmation/rejection callbacks, main menu FSM dashboard is redirected to block page, and `ReplyKeyboardRemove` is used to instantly clear tutor menu keyboards upon revocation.
+  * **Real-time schedule filtering**: removed the 15-minute delay/caching for past bookings, so they disappear immediately from the tutor's active schedule and the student's active booking list at the exact start minute of the lesson.
+  * **Automated Bot Metadata**: sets bot description (pre-start screen) and short description programmatically on startup.
+  * **VPS Deployment**: Deployed on Beget VPS (IP: `212.67.11.175`) with PostgreSQL database, systemd daemon service, Nginx reverse proxy, and registered domain `academiclink.ru` (delegation pending for Certbot SSL setup).
+  * **Contact Support System**: Implemented a bilateral support communication channel for both tutors and students using `SupportStates` and `settings.admin_tg_id`. Tutors with expired subscriptions bypass middleware checks to access support.
+

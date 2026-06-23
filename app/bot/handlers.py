@@ -137,6 +137,11 @@ class TutorSubStates(StatesGroup):
     waiting_payer_name = State()
 
 
+class SupportStates(StatesGroup):
+    waiting_message = State()
+    waiting_admin_reply = State()
+
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -199,7 +204,7 @@ class TutorCallbackMiddleware(BaseMiddleware):
         data: Dict[str, Any]
     ) -> Any:
         # Allow student-scoped and admin-scoped callbacks to pass through without tutor check
-        if event.data and (event.data.startswith("student_") or event.data.startswith("admin_sub_")):
+        if event.data and (event.data.startswith("student_") or event.data.startswith("admin_")):
             return await handler(event, data)
 
 
@@ -208,8 +213,8 @@ class TutorCallbackMiddleware(BaseMiddleware):
             if tutor is None:
                 await event.answer("⚠️ Это действие доступно только репетиторам.", show_alert=True)
                 return
-            # Allow subscription and admin callbacks through even for expired subscriptions
-            bypass_prefixes = ("tutor_sub_", "admin_sub_")
+            # Allow subscription, support and admin callbacks through even for expired subscriptions
+            bypass_prefixes = ("tutor_sub_", "admin_", "tutor_contact_support")
             is_bypassed = any(event.data.startswith(p) for p in bypass_prefixes) if event.data else False
             from app.core.config import settings
             if event.from_user.id == settings.admin_tg_id:
@@ -246,13 +251,17 @@ class TutorMessageMiddleware(BaseMiddleware):
         is_start = event.text and event.text.startswith("/start")
 
         is_sub_fsm = False
+        is_support_fsm = False
         state = data.get("state")
         if state:
             current_state = await state.get_state()
-            if current_state and current_state.startswith("TutorSubStates"):
-                is_sub_fsm = True
+            if current_state:
+                if current_state.startswith("TutorSubStates"):
+                    is_sub_fsm = True
+                elif current_state.startswith("SupportStates"):
+                    is_support_fsm = True
 
-        if not is_admin and not is_start and not is_sub_fsm:
+        if not is_admin and not is_start and not is_sub_fsm and not is_support_fsm:
             tg_id = event.from_user.id
             # BUG #014 fix: check TTL cache before hitting DB
             now_ts = _time.monotonic()
@@ -1531,6 +1540,9 @@ def _settings_kb(tutor: Tutor) -> InlineKeyboardMarkup:
         [
             gcal_btn
         ],
+        [
+            InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="tutor_contact_support")
+        ],
     ])
 
 
@@ -1574,6 +1586,9 @@ async def cmd_settings(message: Message, state: FSMContext) -> None:
                     [
                         InlineKeyboardButton(text="✍️ Изменить ФИО", callback_data="student_edit_name"),
                         InlineKeyboardButton(text="📱 Изменить телефон", callback_data="student_edit_phone"),
+                    ],
+                    [
+                        InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="student_contact_support")
                     ]
                 ])
                 await message.answer(
@@ -5237,3 +5252,161 @@ async def process_admin_sub_revoke_manual(message: Message, state: FSMContext) -
             )
         except Exception as e:
             logger.error("Failed to notify tutor of revoked subscription: %s", e)
+
+
+# ── Support Handlers ──────────────────────────────────────────────────
+
+@router.callback_query(F.data == "tutor_contact_support")
+@router.callback_query(F.data == "student_contact_support")
+async def cb_contact_support(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SupportStates.waiting_message)
+    # Store whether they are tutor or student to redirect back properly if cancelled
+    is_tutor = callback.data.startswith("tutor")
+    await state.update_data(is_tutor=is_tutor)
+    
+    await callback.message.answer(
+        "✍️ <b>Напишите ваше сообщение для службы поддержки AcademicLink.</b>\n\n"
+        "Опишите вашу проблему или предложение в ответном сообщении, и администратор свяжется с вами.\n\n"
+        "<i>Для отмены пришлите /cancel</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(SupportStates.waiting_message)
+async def process_support_message(message: Message, state: FSMContext) -> None:
+    state_data = await state.get_data()
+    is_tutor = state_data.get("is_tutor", False)
+
+    if message.text == "/cancel":
+        await state.clear()
+        if is_tutor:
+            await _show_settings_after_input(message)
+        else:
+            await cmd_settings(message, state)
+        return
+
+    message_text = message.text or message.caption
+    if not message_text:
+        await message.answer("❌ Пожалуйста, отправьте текстовое сообщение или описание проблемы:")
+        return
+
+    from app.core.config import settings
+    from app.core.bot import get_bot
+    bot = get_bot()
+
+    if not settings.admin_tg_id or not bot:
+        await state.clear()
+        await message.answer("⚠️ <b>Связь с поддержкой временно недоступна.</b>\n\nАдминистратор платформы не настроен.", parse_mode="HTML")
+        if is_tutor:
+            await _show_settings_after_input(message)
+        else:
+            await cmd_settings(message, state)
+        return
+
+    role = "Репетитор" if is_tutor else "Ученик"
+    user_name = message.from_user.full_name
+    username = f"@{message.from_user.username}" if message.from_user.username else "нет"
+    user_id = message.from_user.id
+
+    admin_text = (
+        "🆘 <b>Новое обращение в поддержку!</b>\n\n"
+        f"👤 От кого: <b>{user_name}</b>\n"
+        f"🏷 Роль: <b>{role}</b>\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"🔗 Telegram: {username}\n\n"
+        f"📝 <b>Сообщение:</b>\n{message_text}"
+    )
+
+    reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Ответить", callback_data=f"admin_support_reply:{user_id}")]
+    ])
+
+    try:
+        await bot.send_message(
+            chat_id=settings.admin_tg_id,
+            text=admin_text,
+            parse_mode="HTML",
+            reply_markup=reply_kb
+        )
+        await state.clear()
+        await message.answer("✅ <b>Ваше обращение успешно отправлено!</b>\n\nПоддержка ответит вам в ближайшее время.", parse_mode="HTML")
+    except Exception as e:
+        logger.error("Failed to forward support message to admin: %s", e)
+        await message.answer("❌ <b>Произошла ошибка при отправке сообщения.</b>\n\nПожалуйста, попробуйте позже.", parse_mode="HTML")
+        await state.clear()
+
+    if is_tutor:
+        await _show_settings_after_input(message)
+    else:
+        await cmd_settings(message, state)
+
+
+@router.callback_query(F.data.startswith("admin_support_reply:"))
+async def cb_admin_support_reply(callback: CallbackQuery, state: FSMContext) -> None:
+    from app.core.config import settings
+    if settings.admin_tg_id is None or callback.from_user.id != settings.admin_tg_id:
+        await callback.answer("⚠️ Доступ запрещен.", show_alert=True)
+        return
+
+    try:
+        target_user_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Неверный ID пользователя.", show_alert=True)
+        return
+
+    await state.set_state(SupportStates.waiting_admin_reply)
+    await state.update_data(target_user_id=target_user_id)
+
+    await callback.message.answer(
+        f"✍️ <b>Введите ответное сообщение для пользователя (ID: {target_user_id}):</b>\n\n"
+        "<i>Для отмены пришлите /cancel</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(SupportStates.waiting_admin_reply)
+async def process_admin_support_reply(message: Message, state: FSMContext) -> None:
+    from app.core.config import settings
+    if settings.admin_tg_id is None or message.from_user.id != settings.admin_tg_id:
+        await state.clear()
+        return
+
+    state_data = await state.get_data()
+    target_user_id = state_data.get("target_user_id")
+
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Ответить в поддержку отменено.")
+        return
+
+    reply_text = message.text or message.caption
+    if not reply_text:
+        await message.answer("❌ Пожалуйста, отправьте текстовый ответ:")
+        return
+
+    from app.core.bot import get_bot
+    bot = get_bot()
+    if not bot or not target_user_id:
+        await state.clear()
+        await message.answer("❌ Ошибка отправки: бот или получатель недоступны.")
+        return
+
+    user_msg = (
+        "💬 <b>Ответ от службы поддержки AcademicLink:</b>\n\n"
+        f"{reply_text}"
+    )
+
+    try:
+        await bot.send_message(
+            chat_id=target_user_id,
+            text=user_msg,
+            parse_mode="HTML"
+        )
+        await state.clear()
+        await message.answer(f"✅ Ответ успешно отправлен пользователю {target_user_id}!")
+    except Exception as e:
+        logger.error("Failed to send support reply to user %d: %s", target_user_id, e)
+        await message.answer("❌ Не удалось доставить сообщение пользователю. Возможно, он заблокировал бота.")
+        await state.clear()

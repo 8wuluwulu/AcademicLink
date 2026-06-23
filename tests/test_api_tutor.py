@@ -174,8 +174,13 @@ async def test_list_tutor_services(db_session):
 
 @pytest.mark.asyncio
 async def test_get_tutor_slots(db_session):
-    # Monday 22 June 2026
-    date_monday = dt_date(2026, 6, 22)
+    # Find next Monday in the future to avoid past-time filtering
+    today = dt_date.today()
+    days_ahead = 0 - today.weekday()
+    if days_ahead <= 0:
+        days_ahead += 7
+    date_monday = today + timedelta(days=days_ahead)
+    
     res = await get_tutor_slots(tutor_id=1, service_id=1, date=date_monday, session=db_session)
     assert res.tutor_id == 1
     assert res.date == date_monday
